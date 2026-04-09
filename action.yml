@@ -1,0 +1,50 @@
+name: coverage-badge
+description: >
+  Detect coverage output files and update the shields.io badge in README.md.
+  Supports LCOV, Cobertura XML, Coveralls JSON, and Istanbul/NYC JSON.
+author: jedi-knights
+
+branding:
+  icon: shield
+  color: green
+
+inputs:
+  coverage-file:
+    description: >
+      Explicit path to a coverage file. If omitted, the action searches the
+      working directory for: lcov.info, cobertura.xml, coverage.xml,
+      coveralls.json, or coverage-summary.json (in that order).
+    required: false
+    default: ""
+  readme-path:
+    description: Path to the README file containing the badge to update.
+    required: false
+    default: README.md
+  badge-label:
+    description: >
+      The alt-text label of the badge to update — the text inside ![...].
+      Must match the label in your existing badge exactly.
+    required: false
+    default: coverage
+  fail-below:
+    description: Exit non-zero if coverage is below this percentage. "0" disables the check.
+    required: false
+    default: "0"
+
+outputs:
+  coverage-percentage:
+    description: Coverage percentage as a bare number (e.g. "87.5").
+    value: ${{ steps.update.outputs.coverage-percentage }}
+
+runs:
+  using: composite
+  steps:
+    - name: Update coverage badge
+      id: update
+      shell: bash
+      env:
+        COVERAGE_FILE: ${{ inputs.coverage-file }}
+        README_PATH: ${{ inputs.readme-path }}
+        BADGE_LABEL: ${{ inputs.badge-label }}
+        FAIL_BELOW: ${{ inputs.fail-below }}
+      run: python3 "${{ github.action_path }}/scripts/update_badge.py"
