@@ -1,0 +1,6 @@
+prepare:
+  changelog_file: CHANGELOG.md
+  version_file: VERSION
+
+github:
+  create_release: true

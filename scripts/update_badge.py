@@ -22,7 +22,6 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from urllib.parse import unquote
 
-
 # ---------------------------------------------------------------------------
 # Parsers
 # ---------------------------------------------------------------------------
@@ -327,7 +326,10 @@ def update_badge(readme_path: str, pct: float, label: str) -> bool:
 
 
 def set_output(name: str, value: str) -> None:
-    """Write a GitHub Actions step output, falling back to stdout when outside a runner."""
+    """Write a GitHub Actions step output.
+
+    Falls back to stdout when outside a runner.
+    """
     output_file = os.environ.get("GITHUB_OUTPUT")
     if output_file:
         with open(output_file, "a", encoding="utf-8") as f:
@@ -356,7 +358,8 @@ def _parse_fail_below(badge_label: str) -> float | None:
         value = float(raw)
     except ValueError:
         print(
-            f"::error::Invalid fail-below value: {raw!r} — must be a number between 0 and 100",
+            f"::error::Invalid fail-below value: {raw!r} "
+            "— must be a number between 0 and 100",
             flush=True,
         )
         return None
@@ -415,13 +418,15 @@ def main() -> int:
         print(f"Badge updated in {readme_path}", flush=True)
     else:
         print(
-            f"::warning::No '{badge_label}' badge found in {readme_path} — nothing to update",
+            f"::warning::No '{badge_label}' badge found in {readme_path}"
+            " — nothing to update",
             flush=True,
         )
 
     if fail_below > 0 and pct < fail_below:
         print(
-            f"::error::Coverage {pct:.1f}% is below the required threshold of {fail_below:.1f}%",
+            f"::error::Coverage {pct:.1f}% is below the required "
+            f"threshold of {fail_below:.1f}%",
             flush=True,
         )
         return 1

@@ -1,0 +1,23 @@
+[project]
+name = "coverage-badge"
+version = "0.0.0"
+description = "GitHub Action that reads a coverage output file and updates a shields.io badge in your README"
+requires-python = ">=3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "invoke>=2.2",
+    "pytest>=8.0",
+    "ruff>=0.9",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C90"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 7
