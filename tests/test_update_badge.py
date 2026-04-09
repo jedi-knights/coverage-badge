@@ -37,7 +37,7 @@ def _write_readme(tmp_path: Path, content: str) -> Path:
 
 def _setup_main(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
     *,
     lf: int = 10,
     lh: int = 8,
@@ -664,6 +664,8 @@ def test_resolve_coverage_invalid_json_returns_none(tmp_path):
 
 
 def test_resolve_coverage_autodetect(tmp_path, monkeypatch):
+    # chdir is required here: _resolve_coverage("") calls detect_and_parse()
+    # with no root arg, so it searches from cwd. This tests the default-root path.
     monkeypatch.chdir(tmp_path)
     (tmp_path / "lcov.info").write_text(_LCOV_80)
     assert ub._resolve_coverage("") == pytest.approx(80.0)
@@ -819,7 +821,7 @@ def test_main_no_coverage_file_no_badge_warns_and_returns_0(
     monkeypatch.delenv("FAIL_BELOW", raising=False)
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
     assert ub.main() == 0
-    assert "No coverage data found" in capsys.readouterr().out
+    assert "badge updated to show 'unknown'" in capsys.readouterr().out
 
 
 def test_main_invalid_fail_below_returns_1(tmp_path, monkeypatch):
@@ -853,7 +855,7 @@ def test_main_update_badge_oserror_returns_1(tmp_path, monkeypatch):
 
 
 def test_update_badge_cleans_up_temp_file_on_write_error(tmp_path, monkeypatch):
-    # Force os.replace to fail to exercise the cleanup branch (lines 317-319).
+    # Force os.replace to fail to exercise the cleanup branch.
     f = _write_readme(tmp_path, f"{_BADGE}\n")
 
     def _fail(*_args):
@@ -862,3 +864,6 @@ def test_update_badge_cleans_up_temp_file_on_write_error(tmp_path, monkeypatch):
     monkeypatch.setattr(ub.os, "replace", _fail)
     with pytest.raises(OSError, match="simulated disk full"):
         ub.update_badge(str(f), 80.0, "coverage")
+
+    # Only the original README should remain — no leaked temp files.
+    assert set(tmp_path.iterdir()) == {f}

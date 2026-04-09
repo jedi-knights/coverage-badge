@@ -193,7 +193,7 @@ def _infer_format_from_content(path: str) -> str:
         except json.JSONDecodeError as exc:
             raise ValueError(
                 f"Cannot determine coverage format for {path!r}: "
-                "file starts with '{{' but is not valid JSON (first 64 KB)"
+                "file starts with '{' but is not valid JSON (first 64 KB)"
             ) from exc
         if "covered_percent" in data:
             return "coveralls"
@@ -322,7 +322,7 @@ def update_badge(readme_path: str, pct: float | None, label: str) -> bool:
         with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(updated)
         os.replace(tmp_path, readme_path)
-    except Exception:
+    except OSError:
         Path(tmp_path).unlink(missing_ok=True)
         raise
     return True
