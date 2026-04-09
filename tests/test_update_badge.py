@@ -587,10 +587,13 @@ def test_set_output_appends_multiple_values(tmp_path, monkeypatch):
     assert "a=1" in lines and "b=2" in lines
 
 
-def test_set_output_falls_back_to_stdout(monkeypatch, capsys):
+def test_set_output_falls_back_to_logger(monkeypatch, caplog):
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
-    ub.set_output("coverage-percentage", "87.5")
-    assert "coverage-percentage=87.5" in capsys.readouterr().out
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="update_badge"):
+        ub.set_output("coverage-percentage", "87.5")
+    assert any("coverage-percentage=87.5" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -810,9 +813,11 @@ def test_main_no_coverage_file_updates_badge_to_unknown(tmp_path, monkeypatch):
 
 
 def test_main_no_coverage_file_no_badge_warns_and_returns_0(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch, caplog
 ):
     # No coverage files and no matching badge — still returns 0 with a warning.
+    import logging
+
     readme = _write_readme(tmp_path, "No badge here.\n")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("BADGE_LABEL", "coverage")
@@ -820,8 +825,9 @@ def test_main_no_coverage_file_no_badge_warns_and_returns_0(
     monkeypatch.delenv("COVERAGE_FILE", raising=False)
     monkeypatch.delenv("FAIL_BELOW", raising=False)
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
-    assert ub.main() == 0
-    assert "badge updated to show 'unknown'" in capsys.readouterr().out
+    with caplog.at_level(logging.WARNING, logger="update_badge"):
+        assert ub.main() == 0
+    assert any("badge updated to show 'unknown'" in r.message for r in caplog.records)
 
 
 def test_main_invalid_fail_below_returns_1(tmp_path, monkeypatch):
@@ -836,10 +842,13 @@ def test_main_badge_not_found_warns_but_returns_0(tmp_path, monkeypatch):
     assert ub.main() == 0
 
 
-def test_main_outputs_coverage_percentage(tmp_path, monkeypatch, capsys):
+def test_main_outputs_coverage_percentage(tmp_path, monkeypatch, caplog):
+    import logging
+
     _setup_main(tmp_path, monkeypatch)
-    ub.main()
-    assert "80.0%" in capsys.readouterr().out
+    with caplog.at_level(logging.INFO, logger="update_badge"):
+        ub.main()
+    assert any("80.0%" in r.message for r in caplog.records)
 
 
 def test_main_update_badge_oserror_returns_1(tmp_path, monkeypatch):
