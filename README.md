@@ -2,6 +2,8 @@
 
 A language-agnostic GitHub Action that reads a coverage output file and updates the shields.io badge in your README.
 
+![CI](https://github.com/jedi-knights/coverage-badge/actions/workflows/ci.yml/badge.svg)
+![Release](https://github.com/jedi-knights/coverage-badge/actions/workflows/release.yml/badge.svg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ## Table of Contents
@@ -42,6 +44,7 @@ It works with any language that produces LCOV, Cobertura XML, Coveralls JSON, or
 - A coverage file produced by your test suite in one of the [supported formats](#supported-formats)
 - A shields.io static badge in your README (see [Badge Setup](#badge-setup))
 - For self-hosted runners: `python3` must be available in `PATH`
+- For local development: Python 3.13 and [uv](https://docs.astral.sh/uv/)
 
 ## Installation
 
@@ -208,11 +211,24 @@ If your README contains badges with different labels (e.g. `coverage` and `branc
 
 ### Setup
 
-No build step is required. The action runs a single Python 3 script with no third-party dependencies.
+Requires Python 3.13 and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 git clone https://github.com/jedi-knights/coverage-badge
 cd coverage-badge
+uv sync
+```
+
+### Build tasks
+
+Common tasks are available via [invoke](https://www.pyinvoke.org/):
+
+```bash
+uv run invoke lint      # ruff linter + format check
+uv run invoke fmt       # auto-format with ruff
+uv run invoke test      # run the test suite
+uv run invoke check     # syntax check the worker script
+uv run invoke ci        # run all checks (lint + check + tests)
 ```
 
 ### Running the script locally
@@ -220,22 +236,11 @@ cd coverage-badge
 All inputs are read from environment variables, making it straightforward to test outside of a runner:
 
 ```bash
-# Auto-detect a coverage file and update README.md (dry run — badge is actually written)
 COVERAGE_FILE=coverage/lcov.info \
 README_PATH=README.md \
 BADGE_LABEL=coverage \
 FAIL_BELOW=0 \
 python3 scripts/update_badge.py
-```
-
-### Running the tests
-
-```bash
-# Syntax check
-python3 -m py_compile scripts/update_badge.py
-
-# Unit tests (once added)
-python3 -m pytest tests/
 ```
 
 ### Project layout
@@ -244,6 +249,8 @@ python3 -m pytest tests/
 action.yml                  Action definition and input/output schema
 scripts/
   update_badge.py           Worker script: detect, parse, and update
+tasks.py                    Invoke build tasks
+pyproject.toml              Project metadata and tool configuration
 ```
 
 ## Contributing

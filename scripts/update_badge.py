@@ -13,6 +13,7 @@ Supported formats (auto-detected in priority order):
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sys
@@ -22,10 +23,54 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from urllib.parse import unquote
 
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+logger = logging.getLogger(__name__)
+
+
+class _GitHubActionsFormatter(logging.Formatter):
+    """Format log records as GitHub Actions workflow commands.
+
+    ERROR and WARNING records are prefixed with the corresponding annotation
+    command so GitHub renders them in the job summary and step log.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        msg = record.getMessage()
+        if record.levelno >= logging.ERROR:
+            return f"::error::{msg}"
+        if record.levelno >= logging.WARNING:
+            return f"::warning::{msg}"
+        return msg
+
+
+def _configure_logging() -> None:
+    """Attach a stdout handler with the GitHub Actions formatter to the module logger.
+
+    Called only when the script runs directly so that test imports do not
+    install handlers; tests capture records via pytest's caplog fixture instead.
+    """
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(_GitHubActionsFormatter())
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+
 
 # ---------------------------------------------------------------------------
 # Parsers
 # ---------------------------------------------------------------------------
+
+
+def _parse_lcov_int(field: str, raw: str, path: str) -> int:
+    """Parse an integer from an LCOV field value, raising ValueError on failure."""
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"Malformed {field}: record in {path!r}: {field}:{raw!r}"
+        ) from exc
 
 
 def parse_lcov(path: str) -> float:
@@ -35,21 +80,13 @@ def parse_lcov(path: str) -> float:
         for line in f:
             line = line.strip()
             if line.startswith("LF:"):
-                try:
-                    lf += int(line[3:])
-                except ValueError as exc:
-                    raise ValueError(
-                        f"Malformed LF: record in {path!r}: {line!r}"
-                    ) from exc
+                lf += _parse_lcov_int("LF", line[3:], path)
             elif line.startswith("LH:"):
-                try:
-                    lh += int(line[3:])
-                except ValueError as exc:
-                    raise ValueError(
-                        f"Malformed LH: record in {path!r}: {line!r}"
-                    ) from exc
+                lh += _parse_lcov_int("LH", line[3:], path)
     if not lf:
         raise ValueError(f"No LF: records found in LCOV file: {path!r}")
+    if lh > lf:
+        raise ValueError(f"Invalid LCOV data in {path!r}: LH ({lh}) exceeds LF ({lf})")
     return lh / lf * 100
 
 
@@ -135,8 +172,8 @@ _SKIP_DIRS = frozenset(
 )
 
 
-def _find_files(pattern: str) -> Iterator[str]:
-    for path in Path(".").glob(pattern):
+def _find_files(pattern: str, root: Path = Path(".")) -> Iterator[str]:
+    for path in root.glob(pattern):
         if not any(part in _SKIP_DIRS for part in path.parts):
             yield str(path)
 
@@ -154,11 +191,11 @@ def _parse(fmt: str, path: str) -> float:
     return _PARSERS[fmt](path)
 
 
-def detect_and_parse() -> float:
+def detect_and_parse(root: Path = Path(".")) -> float:
     """Search the working tree for a supported coverage file and parse it."""
     for fmt, pattern in _CANDIDATES:
-        for path in _find_files(pattern):
-            print(f"Detected {fmt} coverage file: {path}", flush=True)
+        for path in _find_files(pattern, root):
+            logger.info("Detected %s coverage file: %s", fmt, path)
             return _parse(fmt, path)
     raise FileNotFoundError(
         "No coverage file found. Provide one via the coverage-file input or "
@@ -192,7 +229,7 @@ def _infer_format_from_content(path: str) -> str:
         except json.JSONDecodeError as exc:
             raise ValueError(
                 f"Cannot determine coverage format for {path!r}: "
-                "file starts with '{{' but is not valid JSON (first 64 KB)"
+                "file starts with '{' but is not valid JSON (first 64 KB)"
             ) from exc
         if "covered_percent" in data:
             return "coveralls"
@@ -267,10 +304,16 @@ def badge_color(pct: float) -> str:
     return "red"
 
 
-def badge_url(pct: float, label: str) -> str:
-    """Build a static shields.io badge URL for the given percentage and label."""
-    color = badge_color(pct)
+def badge_url(pct: float | None, label: str) -> str:
+    """Build a static shields.io badge URL for the given percentage and label.
+
+    When pct is None, returns an 'unknown' badge with lightgrey color to
+    indicate that no coverage data is available.
+    """
     encoded_label = _shields_encode(label)
+    if pct is None:
+        return f"https://img.shields.io/badge/{encoded_label}-unknown-lightgrey"
+    color = badge_color(pct)
     # shields.io requires % to be percent-encoded as %25 in static badge URLs.
     return f"https://img.shields.io/badge/{encoded_label}-{pct:.1f}%25-{color}"
 
@@ -283,7 +326,7 @@ _BADGE_URL_RE = re.compile(
 )
 
 
-def update_badge(readme_path: str, pct: float, label: str) -> bool:
+def update_badge(readme_path: str, pct: float | None, label: str) -> bool:
     """Replace the matching badge URL in readme_path.
 
     Returns True when a replacement was made, False when no matching badge was
@@ -315,7 +358,7 @@ def update_badge(readme_path: str, pct: float, label: str) -> bool:
         with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(updated)
         os.replace(tmp_path, readme_path)
-    except Exception:
+    except OSError:
         Path(tmp_path).unlink(missing_ok=True)
         raise
     return True
@@ -327,14 +370,17 @@ def update_badge(readme_path: str, pct: float, label: str) -> bool:
 
 
 def set_output(name: str, value: str) -> None:
-    """Write a GitHub Actions step output, falling back to stdout when outside a runner."""
+    """Write a GitHub Actions step output.
+
+    Falls back to a logger.info call when outside a runner.
+    """
     output_file = os.environ.get("GITHUB_OUTPUT")
     if output_file:
         with open(output_file, "a", encoding="utf-8") as f:
             f.write(f"{name}={value}\n")
     else:
         # Fallback for local testing outside of a runner.
-        print(f"output: {name}={value}", flush=True)
+        logger.info("output: %s=%s", name, value)
 
 
 # ---------------------------------------------------------------------------
@@ -346,47 +392,77 @@ def _parse_fail_below(badge_label: str) -> float | None:
     """Validate badge_label is non-empty and parse the FAIL_BELOW env var.
 
     Returns the float threshold on success, or None on any validation failure
-    (error is printed before returning None).
+    (error is logged before returning None).
     """
     if not badge_label:
-        print("::error::badge-label must not be empty", flush=True)
+        logger.error("badge-label must not be empty")
         return None
     raw = os.environ.get("FAIL_BELOW", "0").strip() or "0"
     try:
         value = float(raw)
     except ValueError:
-        print(
-            f"::error::Invalid fail-below value: {raw!r} — must be a number between 0 and 100",
-            flush=True,
+        logger.error(
+            "Invalid fail-below value: %r — must be a number between 0 and 100", raw
         )
         return None
     if not 0 <= value <= 100:
-        print(
-            f"::error::Invalid fail-below value: {value} — must be between 0 and 100",
-            flush=True,
-        )
+        logger.error("Invalid fail-below value: %s — must be between 0 and 100", value)
         return None
     return value
+
+
+def _parse_coverage_file(coverage_file: str) -> float | None:
+    """Parse an explicitly supplied coverage file. Returns None on any error."""
+    try:
+        fmt = infer_format(coverage_file)
+        logger.info("Using explicit coverage file (%s): %s", fmt, coverage_file)
+        return _parse(fmt, coverage_file)
+    except json.JSONDecodeError as exc:
+        logger.error("Failed to parse JSON coverage file: %s", exc)
+    except ET.ParseError as exc:
+        logger.error("Failed to parse XML coverage file: %s", exc)
+    except (OSError, ValueError) as exc:
+        logger.error("%s", exc)
+    return None
 
 
 def _resolve_coverage(coverage_file: str) -> float | None:
     """Parse the coverage percentage from a file or auto-detection.
 
-    Returns the percentage, or None if an error occurred (error is printed).
+    When coverage_file is empty, searches the workspace automatically. Raises
+    FileNotFoundError if no coverage files are found (caller decides how to
+    handle the no-data case). Returns None when a parse error occurs (the error
+    is already logged before returning).
     """
+    if coverage_file:
+        return _parse_coverage_file(coverage_file)
     try:
-        if coverage_file:
-            fmt = infer_format(coverage_file)
-            print(f"Using explicit coverage file ({fmt}): {coverage_file}", flush=True)
-            return _parse(fmt, coverage_file)
         return detect_and_parse()
-    except (OSError, ValueError) as exc:
-        print(f"::error::{exc}", flush=True)
-    except ET.ParseError as exc:
-        print(f"::error::Failed to parse XML coverage file: {exc}", flush=True)
+    except FileNotFoundError:
+        raise  # propagate "no coverage files in workspace" for main() to handle
     except json.JSONDecodeError as exc:
-        print(f"::error::Failed to parse JSON coverage file: {exc}", flush=True)
+        logger.error("Failed to parse JSON coverage file: %s", exc)
+    except ET.ParseError as exc:
+        logger.error("Failed to parse XML coverage file: %s", exc)
+    except (OSError, ValueError) as exc:
+        logger.error("%s", exc)
     return None
+
+
+def _update_readme_badge(readme_path: str, pct: float | None, badge_label: str) -> int:
+    """Write the coverage badge to the README. Returns 0 on success, 1 on OSError."""
+    try:
+        found = update_badge(readme_path, pct, badge_label)
+    except OSError as exc:
+        logger.error("%s", exc)
+        return 1
+    if found:
+        logger.info("Badge updated in %s", readme_path)
+    else:
+        logger.warning(
+            "No '%s' badge found in %s — nothing to update", badge_label, readme_path
+        )
+    return 0
 
 
 def main() -> int:
@@ -398,36 +474,32 @@ def main() -> int:
     if fail_below is None:
         return 1
 
-    pct = _resolve_coverage(coverage_file)
+    try:
+        pct = _resolve_coverage(coverage_file)
+    except FileNotFoundError:
+        logger.warning("No coverage data found — badge updated to show 'unknown'")
+        return _update_readme_badge(readme_path, None, badge_label)
+
     if pct is None:
         return 1
 
-    print(f"Coverage: {pct:.1f}%", flush=True)
+    logger.info("Coverage: %s%%", f"{pct:.1f}")
     set_output("coverage-percentage", f"{pct:.1f}")
 
-    try:
-        found = update_badge(readme_path, pct, badge_label)
-    except OSError as exc:
-        print(f"::error::{exc}", flush=True)
+    if _update_readme_badge(readme_path, pct, badge_label):
         return 1
 
-    if found:
-        print(f"Badge updated in {readme_path}", flush=True)
-    else:
-        print(
-            f"::warning::No '{badge_label}' badge found in {readme_path} — nothing to update",
-            flush=True,
-        )
-
     if fail_below > 0 and pct < fail_below:
-        print(
-            f"::error::Coverage {pct:.1f}% is below the required threshold of {fail_below:.1f}%",
-            flush=True,
+        logger.error(
+            "Coverage %s%% is below the required threshold of %s%%",
+            f"{pct:.1f}",
+            f"{fail_below:.1f}",
         )
         return 1
 
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
+    _configure_logging()
     sys.exit(main())
