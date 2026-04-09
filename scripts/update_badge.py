@@ -27,6 +27,16 @@ from urllib.parse import unquote
 # ---------------------------------------------------------------------------
 
 
+def _parse_lcov_int(field: str, raw: str, path: str) -> int:
+    """Parse an integer from an LCOV field value, raising ValueError on failure."""
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"Malformed {field}: record in {path!r}: {field}:{raw!r}"
+        ) from exc
+
+
 def parse_lcov(path: str) -> float:
     """Sum LF (lines found) and LH (lines hit) records across all source files."""
     lf = lh = 0
@@ -34,21 +44,13 @@ def parse_lcov(path: str) -> float:
         for line in f:
             line = line.strip()
             if line.startswith("LF:"):
-                try:
-                    lf += int(line[3:])
-                except ValueError as exc:
-                    raise ValueError(
-                        f"Malformed LF: record in {path!r}: {line!r}"
-                    ) from exc
+                lf += _parse_lcov_int("LF", line[3:], path)
             elif line.startswith("LH:"):
-                try:
-                    lh += int(line[3:])
-                except ValueError as exc:
-                    raise ValueError(
-                        f"Malformed LH: record in {path!r}: {line!r}"
-                    ) from exc
+                lh += _parse_lcov_int("LH", line[3:], path)
     if not lf:
         raise ValueError(f"No LF: records found in LCOV file: {path!r}")
+    if lh > lf:
+        raise ValueError(f"Invalid LCOV data in {path!r}: LH ({lh}) exceeds LF ({lf})")
     return lh / lf * 100
 
 
@@ -134,8 +136,8 @@ _SKIP_DIRS = frozenset(
 )
 
 
-def _find_files(pattern: str) -> Iterator[str]:
-    for path in Path(".").glob(pattern):
+def _find_files(pattern: str, root: Path = Path(".")) -> Iterator[str]:
+    for path in root.glob(pattern):
         if not any(part in _SKIP_DIRS for part in path.parts):
             yield str(path)
 
@@ -153,10 +155,10 @@ def _parse(fmt: str, path: str) -> float:
     return _PARSERS[fmt](path)
 
 
-def detect_and_parse() -> float:
+def detect_and_parse(root: Path = Path(".")) -> float:
     """Search the working tree for a supported coverage file and parse it."""
     for fmt, pattern in _CANDIDATES:
-        for path in _find_files(pattern):
+        for path in _find_files(pattern, root):
             print(f"Detected {fmt} coverage file: {path}", flush=True)
             return _parse(fmt, path)
     raise FileNotFoundError(
@@ -266,10 +268,16 @@ def badge_color(pct: float) -> str:
     return "red"
 
 
-def badge_url(pct: float, label: str) -> str:
-    """Build a static shields.io badge URL for the given percentage and label."""
-    color = badge_color(pct)
+def badge_url(pct: float | None, label: str) -> str:
+    """Build a static shields.io badge URL for the given percentage and label.
+
+    When pct is None, returns an 'unknown' badge with lightgrey color to
+    indicate that no coverage data is available.
+    """
     encoded_label = _shields_encode(label)
+    if pct is None:
+        return f"https://img.shields.io/badge/{encoded_label}-unknown-lightgrey"
+    color = badge_color(pct)
     # shields.io requires % to be percent-encoded as %25 in static badge URLs.
     return f"https://img.shields.io/badge/{encoded_label}-{pct:.1f}%25-{color}"
 
@@ -282,7 +290,7 @@ _BADGE_URL_RE = re.compile(
 )
 
 
-def update_badge(readme_path: str, pct: float, label: str) -> bool:
+def update_badge(readme_path: str, pct: float | None, label: str) -> bool:
     """Replace the matching badge URL in readme_path.
 
     Returns True when a replacement was made, False when no matching badge was
@@ -372,24 +380,60 @@ def _parse_fail_below(badge_label: str) -> float | None:
     return value
 
 
+def _parse_coverage_file(coverage_file: str) -> float | None:
+    """Parse an explicitly supplied coverage file. Returns None on any error."""
+    try:
+        fmt = infer_format(coverage_file)
+        print(f"Using explicit coverage file ({fmt}): {coverage_file}", flush=True)
+        return _parse(fmt, coverage_file)
+    except json.JSONDecodeError as exc:
+        print(f"::error::Failed to parse JSON coverage file: {exc}", flush=True)
+    except ET.ParseError as exc:
+        print(f"::error::Failed to parse XML coverage file: {exc}", flush=True)
+    except (OSError, ValueError) as exc:
+        print(f"::error::{exc}", flush=True)
+    return None
+
+
 def _resolve_coverage(coverage_file: str) -> float | None:
     """Parse the coverage percentage from a file or auto-detection.
 
-    Returns the percentage, or None if an error occurred (error is printed).
+    When coverage_file is empty, searches the workspace automatically. Raises
+    FileNotFoundError if no coverage files are found (caller decides how to
+    handle the no-data case). Returns None when a parse error occurs (the error
+    is already printed before returning).
     """
+    if coverage_file:
+        return _parse_coverage_file(coverage_file)
     try:
-        if coverage_file:
-            fmt = infer_format(coverage_file)
-            print(f"Using explicit coverage file ({fmt}): {coverage_file}", flush=True)
-            return _parse(fmt, coverage_file)
         return detect_and_parse()
-    except (OSError, ValueError) as exc:
-        print(f"::error::{exc}", flush=True)
-    except ET.ParseError as exc:
-        print(f"::error::Failed to parse XML coverage file: {exc}", flush=True)
+    except FileNotFoundError:
+        raise  # propagate "no coverage files in workspace" for main() to handle
     except json.JSONDecodeError as exc:
         print(f"::error::Failed to parse JSON coverage file: {exc}", flush=True)
+    except ET.ParseError as exc:
+        print(f"::error::Failed to parse XML coverage file: {exc}", flush=True)
+    except (OSError, ValueError) as exc:
+        print(f"::error::{exc}", flush=True)
     return None
+
+
+def _update_readme_badge(readme_path: str, pct: float | None, badge_label: str) -> int:
+    """Write the coverage badge to the README. Returns 0 on success, 1 on OSError."""
+    try:
+        found = update_badge(readme_path, pct, badge_label)
+    except OSError as exc:
+        print(f"::error::{exc}", flush=True)
+        return 1
+    if found:
+        print(f"Badge updated in {readme_path}", flush=True)
+    else:
+        print(
+            f"::warning::No '{badge_label}' badge found in {readme_path}"
+            " — nothing to update",
+            flush=True,
+        )
+    return 0
 
 
 def main() -> int:
@@ -401,27 +445,23 @@ def main() -> int:
     if fail_below is None:
         return 1
 
-    pct = _resolve_coverage(coverage_file)
+    try:
+        pct = _resolve_coverage(coverage_file)
+    except FileNotFoundError:
+        print(
+            "::warning::No coverage data found — badge updated to show 'unknown'",
+            flush=True,
+        )
+        return _update_readme_badge(readme_path, None, badge_label)
+
     if pct is None:
         return 1
 
     print(f"Coverage: {pct:.1f}%", flush=True)
     set_output("coverage-percentage", f"{pct:.1f}")
 
-    try:
-        found = update_badge(readme_path, pct, badge_label)
-    except OSError as exc:
-        print(f"::error::{exc}", flush=True)
+    if _update_readme_badge(readme_path, pct, badge_label):
         return 1
-
-    if found:
-        print(f"Badge updated in {readme_path}", flush=True)
-    else:
-        print(
-            f"::warning::No '{badge_label}' badge found in {readme_path}"
-            " — nothing to update",
-            flush=True,
-        )
 
     if fail_below > 0 and pct < fail_below:
         print(
@@ -434,5 +474,5 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())
