@@ -52,3 +52,13 @@ jobs:
           git add CHANGELOG.md VERSION pyproject.toml
           git diff --cached --quiet || git commit -m "chore(release): update version files [skip ci]"
           git push origin HEAD:main
+
+      - name: Update floating major-version tag
+        run: |
+          if [ ! -f VERSION ]; then
+            echo "No new version released — skipping floating tag update."
+            exit 0
+          fi
+          MAJOR="v$(cut -d. -f1 VERSION)"
+          git tag -fa "${MAJOR}" -m "Release ${MAJOR} (floating)"
+          git push origin "${MAJOR}" --force
