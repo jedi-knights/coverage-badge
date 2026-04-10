@@ -14,10 +14,15 @@ A language-agnostic GitHub Action that reads a coverage output file and updates 
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Usage](#usage)
+  - [Keep the badge in sync with main](#keep-the-badge-in-sync-with-main)
 - [Configuration](#configuration)
 - [Outputs](#outputs)
 - [Supported Formats](#supported-formats)
 - [Badge Setup](#badge-setup)
+  - [First-time setup](#first-time-setup)
+  - [Token requirements](#token-requirements)
+  - [Color thresholds](#color-thresholds)
+  - [Multiple badges](#multiple-badges)
 - [Development](#development)
 - [Contributing](#contributing)
 - [License](#license)
@@ -45,7 +50,7 @@ It works with any language that produces LCOV, Cobertura XML, Coveralls JSON, or
 - A coverage file produced by your test suite in one of the [supported formats](#supported-formats)
 - A shields.io static badge in your README (see [Badge Setup](#badge-setup))
 - For self-hosted runners: `python3` must be available in `PATH`
-- For local development: Python 3.13 and [uv](https://docs.astral.sh/uv/)
+- For local development: Python 3.12 and [uv](https://docs.astral.sh/uv/)
 
 ## Installation
 
@@ -128,18 +133,43 @@ steps:
 - uses: jedi-knights/coverage-badge@v1
 ```
 
-### Commit the updated badge back to the branch
+### Keep the badge in sync with main
+
+Run the badge update only on pushes to `main` — not on pull requests. Feature branches would each
+try to commit a badge update, causing conflicts and stale values. A dedicated job with an `if`
+condition isolates the update to the branch whose coverage actually matters.
 
 ```yaml
-- uses: jedi-knights/coverage-badge@v1
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests
+        run: pytest --cov=src --cov-report=xml
 
-- name: Commit badge
-  run: |
-    git config user.name  "github-actions[bot]"
-    git config user.email "github-actions[bot]@users.noreply.github.com"
-    git diff --quiet README.md || (git add README.md && git commit -m "chore: update coverage badge")
-    git push
+  badge:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}   # see Token requirements below
+      - name: Run tests
+        run: pytest --cov=src --cov-report=xml
+      - uses: jedi-knights/coverage-badge@v1
+      - name: Commit badge
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git diff --quiet README.md || (git add README.md && git commit -m "chore: update coverage badge [skip ci]" && git push)
 ```
+
+> **Note:** Include `[skip ci]` in the commit message. Without it, the badge commit triggers
+> another CI run, which triggers another badge commit — an infinite loop.
 
 ## Configuration
 
@@ -174,13 +204,59 @@ To use a file with a non-standard name or path, set the `coverage-file` input ex
 
 ## Badge Setup
 
-Add a placeholder badge to your README before the first run:
+### First-time setup
+
+Add a placeholder badge to your README before the first run. The action matches the badge by its
+alt-text label and rewrites the URL — the starting URL does not matter, but the label must match
+the `badge-label` input (default: `coverage`):
 
 ```markdown
-![coverage](https://img.shields.io/badge/coverage-95.9%25-brightgreen)
+![coverage](https://img.shields.io/badge/coverage-0%25-red)
 ```
 
-The action will replace the URL on each run, keeping the percentage and color current. The badge is matched by its alt-text label (`coverage` by default); if your badge uses a different label, set the `badge-label` input to match.
+On the first push to `main` after setup, the action replaces `0%` with the real percentage and
+updates the color automatically. All subsequent runs keep it current.
+
+### Token requirements
+
+The badge job commits a change directly to `main`. Whether that succeeds depends on your branch
+protection configuration.
+
+| Scenario | Token to use |
+|:---|:---|
+| No branch protection on `main` | `secrets.GITHUB_TOKEN` |
+| Branch protection ruleset or classic protection requiring a pull request | A PAT with `repo` scope stored as `GH_TOKEN` |
+
+**Why `GITHUB_TOKEN` fails with branch protection:**
+
+`GITHUB_TOKEN` is a short-lived token scoped to the workflow run. It cannot bypass branch
+protection rules. If your `main` branch requires all changes to come through a pull request,
+the push will be rejected:
+
+```
+remote: error: GH013: Repository rule violations found for refs/heads/main.
+remote: - Changes must be made through a pull request.
+```
+
+**How to set up a PAT that can bypass the ruleset:**
+
+1. Go to **GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens**
+2. Create a new token scoped to the repository with **Contents: Read and write** permission
+3. The token must belong to a GitHub user who is listed as a bypass actor on the ruleset —
+   repository admins and organization admins are granted bypass by default on the standard
+   "Protect main" ruleset pattern
+4. Add the token as a repository secret: **Settings → Secrets and variables → Actions →
+   New repository secret**, and name it `GH_TOKEN`
+5. Reference it in the `badge` job's checkout step:
+
+```yaml
+- uses: actions/checkout@v4
+  with:
+    token: ${{ secrets.GH_TOKEN }}
+```
+
+The `git push` in the commit step inherits the credentials from the checkout, so no additional
+token configuration is needed for the push itself.
 
 ### Color thresholds
 
