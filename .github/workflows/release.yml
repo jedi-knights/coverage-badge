@@ -24,7 +24,7 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
-          token: ${{ github.token }}
+          token: ${{ secrets.GH_TOKEN }}
 
       - name: Configure git identity
         run: |
@@ -34,7 +34,7 @@ jobs:
       - name: Run semantic release
         uses: jedi-knights/go-semantic-release@v0.9.0
         with:
-          github_token: ${{ github.token }}
+          github_token: ${{ secrets.GH_TOKEN }}
 
       - name: Update pyproject.toml version
         run: |
