@@ -5,6 +5,7 @@ A language-agnostic GitHub Action that reads a coverage output file and updates 
 ![CI](https://github.com/jedi-knights/coverage-badge/actions/workflows/ci.yml/badge.svg?branch=main)
 ![Release](https://github.com/jedi-knights/coverage-badge/actions/workflows/release.yml/badge.svg?branch=main)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![coverage](https://img.shields.io/badge/coverage-0%25-red)
 
 ## Table of Contents
 
@@ -211,7 +212,7 @@ If your README contains badges with different labels (e.g. `coverage` and `branc
 
 ### Setup
 
-Requires Python 3.13 and [uv](https://docs.astral.sh/uv/).
+Requires Python 3.12 and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 git clone https://github.com/jedi-knights/coverage-badge

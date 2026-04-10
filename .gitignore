@@ -9,6 +9,7 @@ __pycache__/
 .pytest_cache/
 .coverage
 .coverage.*
+coverage.xml
 coverage/
 htmlcov/
 
