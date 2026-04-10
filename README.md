@@ -5,7 +5,7 @@ A language-agnostic GitHub Action that reads a coverage output file and updates 
 ![CI](https://github.com/jedi-knights/coverage-badge/actions/workflows/ci.yml/badge.svg?branch=main)
 ![Release](https://github.com/jedi-knights/coverage-badge/actions/workflows/release.yml/badge.svg?branch=main)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![coverage](https://img.shields.io/badge/coverage-0%25-red)
+![coverage](https://img.shields.io/badge/coverage-95.9%25-brightgreen)
 
 ## Table of Contents
 
@@ -177,7 +177,7 @@ To use a file with a non-standard name or path, set the `coverage-file` input ex
 Add a placeholder badge to your README before the first run:
 
 ```markdown
-![coverage](https://img.shields.io/badge/coverage-0%25-red)
+![coverage](https://img.shields.io/badge/coverage-95.9%25-brightgreen)
 ```
 
 The action will replace the URL on each run, keeping the percentage and color current. The badge is matched by its alt-text label (`coverage` by default); if your badge uses a different label, set the `badge-label` input to match.
