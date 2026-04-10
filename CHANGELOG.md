@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1 (2026-04-10)
+
+### Bug Fixes
+
+- **docs:** correct action version references from v1 to v0 (f9bc7d1)
+
 ## 0.2.0 (2026-04-10)
 
 ### Features
