@@ -57,7 +57,7 @@ It works with any language that produces LCOV, Cobertura XML, Coveralls JSON, or
 Reference the action in a workflow step:
 
 ```yaml
-- uses: jedi-knights/coverage-badge@v1
+- uses: jedi-knights/coverage-badge@v0
 ```
 
 No additional setup is required. Python 3 is pre-installed on all GitHub-hosted runners. See [Usage](#usage) for complete workflow examples.
@@ -73,13 +73,13 @@ steps:
   - name: Run tests
     run: pytest --cov=src --cov-report=xml   # produces coverage.xml
 
-  - uses: jedi-knights/coverage-badge@v1
+  - uses: jedi-knights/coverage-badge@v0
 ```
 
 ### With a threshold and explicit file
 
 ```yaml
-- uses: jedi-knights/coverage-badge@v1
+- uses: jedi-knights/coverage-badge@v0
   with:
     coverage-file: coverage/lcov.info
     fail-below: "80"
@@ -88,7 +88,7 @@ steps:
 ### Capture the percentage in a later step
 
 ```yaml
-- uses: jedi-knights/coverage-badge@v1
+- uses: jedi-knights/coverage-badge@v0
   id: badge
 
 - run: echo "Coverage is ${{ steps.badge.outputs.coverage-percentage }}%"
@@ -101,7 +101,7 @@ steps:
   with:
     formats: console,lcov          # produces coverage/lcov.info
 
-- uses: jedi-knights/coverage-badge@v1
+- uses: jedi-knights/coverage-badge@v0
   with:
     fail-below: "80"
 ```
@@ -111,7 +111,7 @@ steps:
 ```yaml
 - run: pytest --cov=src --cov-report=xml   # produces coverage.xml
 
-- uses: jedi-knights/coverage-badge@v1
+- uses: jedi-knights/coverage-badge@v0
   with:
     fail-below: "75"
 ```
@@ -121,7 +121,7 @@ steps:
 ```yaml
 - run: go test ./... -coverprofile=coverage/lcov.info
 
-- uses: jedi-knights/coverage-badge@v1
+- uses: jedi-knights/coverage-badge@v0
 ```
 
 ### After Istanbul / NYC (JavaScript / TypeScript)
@@ -130,7 +130,7 @@ steps:
 - run: npx jest --coverage --coverageReporters=json-summary
   # produces coverage/coverage-summary.json
 
-- uses: jedi-knights/coverage-badge@v1
+- uses: jedi-knights/coverage-badge@v0
 ```
 
 ### Keep the badge in sync with main
@@ -160,7 +160,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}   # see Token requirements below
       - name: Run tests
         run: pytest --cov=src --cov-report=xml
-      - uses: jedi-knights/coverage-badge@v1
+      - uses: jedi-knights/coverage-badge@v0
       - name: Commit badge
         run: |
           git config user.name  "github-actions[bot]"
@@ -273,12 +273,12 @@ token configuration is needed for the push itself.
 If your README contains badges with different labels (e.g. `coverage` and `branch-coverage`), run the action twice with different `badge-label` values:
 
 ```yaml
-- uses: jedi-knights/coverage-badge@v1
+- uses: jedi-knights/coverage-badge@v0
   with:
     coverage-file: coverage/lcov.info
     badge-label: coverage
 
-- uses: jedi-knights/coverage-badge@v1
+- uses: jedi-knights/coverage-badge@v0
   with:
     coverage-file: coverage/branch.info
     badge-label: branch-coverage
