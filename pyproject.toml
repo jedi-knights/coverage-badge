@@ -10,6 +10,7 @@ dev = [
     "invoke>=2.2",
     "pytest>=8.0",
     "pytest-cov>=6.0",
+    "pytest-mock>=3.14",
     "ruff>=0.9",
 ]
 
