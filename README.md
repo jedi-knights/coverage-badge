@@ -211,7 +211,7 @@ alt-text label and rewrites the URL — the starting URL does not matter, but th
 the `badge-label` input (default: `coverage`):
 
 ```markdown
-![coverage](https://img.shields.io/badge/coverage-0%25-red)
+![coverage](https://img.shields.io/badge/coverage-95.9%25-brightgreen)
 ```
 
 On the first push to `main` after setup, the action replaces `0%` with the real percentage and
