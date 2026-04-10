@@ -4,3 +4,5 @@ prepare:
 
 github:
   create_release: true
+  owner: jedi-knights
+  repo: coverage-badge
