@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2 (2026-04-10)
+
+### Bug Fixes
+
+- **action:** fix marketplace name and description (0d41b8c)
+
 ## 0.1.1 (2026-04-10)
 
 ### Bug Fixes

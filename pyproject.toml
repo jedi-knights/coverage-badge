@@ -1,6 +1,6 @@
 [project]
 name = "coverage-badge"
-version = "0.1.1"
+version = "0.1.2"
 description = "GitHub Action that reads a coverage output file and updates a shields.io badge in your README"
 requires-python = ">=3.13"
 dependencies = []
