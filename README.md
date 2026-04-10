@@ -2,8 +2,8 @@
 
 A language-agnostic GitHub Action that reads a coverage output file and updates the shields.io badge in your README.
 
-![CI](https://github.com/jedi-knights/coverage-badge/actions/workflows/ci.yml/badge.svg)
-![Release](https://github.com/jedi-knights/coverage-badge/actions/workflows/release.yml/badge.svg)
+![CI](https://github.com/jedi-knights/coverage-badge/actions/workflows/ci.yml/badge.svg?branch=main)
+![Release](https://github.com/jedi-knights/coverage-badge/actions/workflows/release.yml/badge.svg?branch=main)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ## Table of Contents
