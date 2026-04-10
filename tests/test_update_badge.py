@@ -310,6 +310,18 @@ def test_detect_and_parse_no_file_raises(tmp_path):
         ub.detect_and_parse(tmp_path)
 
 
+def test_detect_and_parse_multiple_matches_warns(tmp_path, caplog):
+    """When multiple files match a format tier, a warning must be logged."""
+    import logging
+
+    (tmp_path / "coverage").mkdir()
+    (tmp_path / "lcov.info").write_text("LF:10\nLH:8\n")
+    (tmp_path / "coverage" / "lcov.info").write_text("LF:10\nLH:5\n")
+    with caplog.at_level(logging.WARNING, logger="update_badge"):
+        ub.detect_and_parse(tmp_path)
+    assert any("Multiple" in r.message for r in caplog.records)
+
+
 # ---------------------------------------------------------------------------
 # infer_format
 # ---------------------------------------------------------------------------
@@ -562,6 +574,15 @@ def test_update_badge_none_pct_writes_unknown_badge(tmp_path):
 def test_update_badge_missing_readme_raises(tmp_path):
     with pytest.raises(OSError):
         ub.update_badge(str(tmp_path / "missing.md"), 80.0, "coverage")
+
+
+def test_update_badge_leading_hyphen_label(tmp_path):
+    """A label starting with '-' encodes to '--<rest>' and must match correctly."""
+    label = "-coverage"
+    readme_content = f"![{label}](https://img.shields.io/badge/--coverage-0%25-red)\n"
+    f = _write_readme(tmp_path, readme_content)
+    assert ub.update_badge(str(f), 80.0, label) is True
+    assert "80.0%25" in f.read_text()
 
 
 # ---------------------------------------------------------------------------
@@ -892,6 +913,16 @@ def test_parse_cobertura_large_file_raises(tmp_path, monkeypatch):
         ub.parse_cobertura(str(f))
 
 
+def test_parse_cobertura_rejects_doctype(tmp_path):
+    """DOCTYPE declarations must be rejected to prevent entity expansion attacks."""
+    f = tmp_path / "coverage.xml"
+    f.write_text(
+        '<!DOCTYPE foo [<!ENTITY x "y">]><coverage line-rate="0.9"></coverage>'
+    )
+    with pytest.raises(ValueError, match="DOCTYPE"):
+        ub.parse_cobertura(str(f))
+
+
 # ---------------------------------------------------------------------------
 # _infer_format_from_content — size guard + full json.load
 # ---------------------------------------------------------------------------
@@ -941,6 +972,23 @@ def test_set_output_newline_in_value_raises(tmp_path, monkeypatch):
     monkeypatch.setenv("GITHUB_OUTPUT", str(output_file))
     with pytest.raises(ValueError, match="newline"):
         ub.set_output("name", "bad\nvalue")
+
+
+def test_set_output_carriage_return_in_name_raises(tmp_path, monkeypatch):
+    # \r can corrupt the GitHub Actions output file on Windows runners.
+    output_file = tmp_path / "output"
+    output_file.touch()
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output_file))
+    with pytest.raises(ValueError, match="newline"):
+        ub.set_output("bad\rname", "value")
+
+
+def test_set_output_carriage_return_in_value_raises(tmp_path, monkeypatch):
+    output_file = tmp_path / "output"
+    output_file.touch()
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output_file))
+    with pytest.raises(ValueError, match="newline"):
+        ub.set_output("name", "bad\rvalue")
 
 
 # ---------------------------------------------------------------------------

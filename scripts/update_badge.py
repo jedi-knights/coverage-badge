@@ -74,7 +74,18 @@ def _parse_lcov_int(field: str, raw: str, path: str) -> int:
 
 
 def parse_lcov(path: str) -> float:
-    """Sum LF (lines found) and LH (lines hit) records across all source files."""
+    """Sum LF (lines found) and LH (lines hit) records across all source files.
+
+    Args:
+        path: Path to the LCOV file to parse.
+
+    Returns:
+        Line coverage as a percentage in the range [0, 100].
+
+    Raises:
+        ValueError: If LF records are missing, malformed, or LH exceeds LF.
+        OSError: If the file cannot be opened.
+    """
     lf = lh = 0
     with open(path, encoding="utf-8") as f:
         for line in f:
@@ -93,13 +104,50 @@ def parse_lcov(path: str) -> float:
 _MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB
 
 
+def _check_xml_safety(path: str) -> None:
+    """Raise ValueError if the XML file contains a DOCTYPE declaration.
+
+    Coverage files never require DOCTYPE declarations; their presence indicates
+    either a non-coverage file or a crafted input that could trigger XML entity
+    expansion attacks (billion laughs).
+
+    Args:
+        path: Path to the XML file to inspect.
+
+    Raises:
+        ValueError: If a DOCTYPE declaration is detected in the first 4096 bytes.
+        OSError: If the file cannot be opened.
+    """
+    with open(path, encoding="utf-8", errors="replace") as f:
+        header = f.read(4096)
+    if re.search(r"<!DOCTYPE", header, re.IGNORECASE):
+        raise ValueError(
+            f"DOCTYPE declarations are not permitted in coverage files: {path!r}"
+        )
+
+
 def parse_cobertura(path: str) -> float:
-    """Read the line-rate attribute from the root coverage element (0–1 scale)."""
+    """Read the line-rate attribute from the root coverage element (0–1 scale).
+
+    Args:
+        path: Path to the Cobertura XML file to parse.
+
+    Returns:
+        Line coverage as a percentage in the range [0, 100].
+
+    Raises:
+        ValueError: If the file exceeds 50 MB, contains a DOCTYPE declaration,
+            is missing a ``<coverage>`` element, is missing the ``line-rate``
+            attribute, or has a non-numeric ``line-rate`` value.
+        xml.etree.ElementTree.ParseError: If the file is not valid XML.
+        OSError: If the file cannot be opened.
+    """
     size = os.path.getsize(path)
     if size > _MAX_FILE_BYTES:
         raise ValueError(
             f"Coverage file is too large to parse safely: {path!r} ({size} bytes)"
         )
+    _check_xml_safety(path)
     tree = ET.parse(path)
     root = tree.getroot()
     # Some generators wrap the root in a different tag; search for <coverage>.
@@ -116,7 +164,19 @@ def parse_cobertura(path: str) -> float:
 
 
 def parse_coveralls(path: str) -> float:
-    """Read covered_percent from a Coveralls-format JSON file."""
+    """Read covered_percent from a Coveralls-format JSON file.
+
+    Args:
+        path: Path to the Coveralls JSON file to parse.
+
+    Returns:
+        Line coverage as a percentage in the range [0, 100].
+
+    Raises:
+        ValueError: If ``covered_percent`` is missing, null, or non-numeric.
+        json.JSONDecodeError: If the file is not valid JSON.
+        OSError: If the file cannot be opened.
+    """
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
     if "covered_percent" not in data:
@@ -131,7 +191,20 @@ def parse_coveralls(path: str) -> float:
 
 
 def parse_istanbul(path: str) -> float:
-    """Read total.lines.pct from an Istanbul/NYC coverage-summary.json file."""
+    """Read total.lines.pct from an Istanbul/NYC coverage-summary.json file.
+
+    Args:
+        path: Path to the Istanbul coverage-summary.json file to parse.
+
+    Returns:
+        Line coverage as a percentage in the range [0, 100].
+
+    Raises:
+        ValueError: If ``total``, ``total.lines``, or ``total.lines.pct`` is
+            missing, null, or non-numeric.
+        json.JSONDecodeError: If the file is not valid JSON.
+        OSError: If the file cannot be opened.
+    """
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
     total = data.get("total")
@@ -205,9 +278,28 @@ def _parse(fmt: str, path: str) -> float:
 
 
 def detect_and_parse(root: Path = Path(".")) -> float:
-    """Search the working tree for a supported coverage file and parse it."""
+    """Search the working tree for a supported coverage file and parse it.
+
+    Candidates are checked in priority order (see ``_CANDIDATES``). The first
+    match within the highest-priority format is used. When multiple files match
+    the same format, a warning is logged and the first result is used.
+
+    Args:
+        root: Directory to search. Defaults to the current working directory.
+
+    Returns:
+        Line coverage as a percentage in the range [0, 100].
+
+    Raises:
+        FileNotFoundError: If no supported coverage file is found under ``root``.
+        ValueError: If the detected file cannot be parsed.
+        OSError: If a matched file cannot be opened.
+    """
     for fmt, pattern in _CANDIDATES:
-        for path in _find_files(pattern, root):
+        matches = list(_find_files(pattern, root))
+        if len(matches) > 1:
+            logger.warning("Multiple %s files found; using %s", fmt, matches[0])
+        for path in matches:
             logger.info("Detected %s coverage file: %s", fmt, path)
             return _parse(fmt, path)
     raise FileNotFoundError(
@@ -237,12 +329,16 @@ def _infer_format_from_content(path: str) -> str:
         raise ValueError(
             f"Coverage file is too large to parse safely: {path!r} ({size} bytes)"
         )
+    # Read only the opening bytes for format detection; loading the full file is
+    # deferred to the JSON path where schema inspection requires complete content.
     with open(path, encoding="utf-8", errors="replace") as f:
-        content = f.read()
-    stripped = content.lstrip()
+        header = f.read(4096)
+    stripped = header.lstrip()
     if stripped.startswith("<"):
         return "cobertura"
     if stripped.startswith("{"):
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
         try:
             data = json.loads(content)
         except json.JSONDecodeError as exc:
@@ -265,7 +361,23 @@ def _infer_format_from_content(path: str) -> str:
 
 
 def infer_format(path: str) -> str:
-    """Infer format from filename, falling back to content inspection."""
+    """Infer format from filename, falling back to content inspection.
+
+    Recognised filenames (case-insensitive): ``lcov.info``, ``cobertura.xml``,
+    ``coverage.xml``, ``coveralls.json``, ``coverage-summary.json``.
+    Non-standard filenames trigger content inspection via
+    :func:`_infer_format_from_content`.
+
+    Args:
+        path: Path to the coverage file.
+
+    Returns:
+        One of ``"lcov"``, ``"cobertura"``, ``"coveralls"``, or ``"istanbul"``.
+
+    Raises:
+        ValueError: If the format cannot be determined from the file contents.
+        OSError: If the file cannot be opened during content inspection.
+    """
     name = Path(path).name.lower()
     fmt = _FILENAME_TO_FORMAT.get(name)
     if fmt is not None:
@@ -313,6 +425,13 @@ def badge_color(pct: float) -> str:
     """Return a shields.io color name for the given percentage.
 
     Thresholds mirror jedi-knights/neospec and common open-source conventions.
+
+    Args:
+        pct: Coverage percentage in the range [0, 100].
+
+    Returns:
+        A shields.io color string: ``"brightgreen"``, ``"green"``, ``"yellow"``,
+        ``"orange"``, or ``"red"``.
     """
     if pct >= 90:
         return "brightgreen"
@@ -328,8 +447,16 @@ def badge_color(pct: float) -> str:
 def badge_url(pct: float | None, label: str) -> str:
     """Build a static shields.io badge URL for the given percentage and label.
 
-    When pct is None, returns an 'unknown' badge with lightgrey color to
-    indicate that no coverage data is available.
+    When ``pct`` is ``None``, returns an ``unknown`` badge with ``lightgrey``
+    color to indicate that no coverage data is available.
+
+    Args:
+        pct: Coverage percentage in the range [0, 100], or ``None`` for unknown.
+        label: Plain-text badge label (e.g. ``"coverage"``). Encoded for
+            shields.io using :func:`_shields_encode`.
+
+    Returns:
+        A fully-formed ``https://img.shields.io/badge/…`` URL string.
     """
     encoded_label = _shields_encode(label)
     if pct is None:
@@ -352,9 +479,22 @@ _BADGE_URL_RE = re.compile(
 def update_badge(readme_path: str, pct: float | None, label: str) -> bool:
     """Replace the matching badge URL in readme_path.
 
-    Returns True when a replacement was made, False when no matching badge was
-    found. Uses an atomic write (temp file + rename) to avoid corrupting the
-    README on partial write failures.
+    Locates all shields.io static badge URLs whose decoded label matches
+    ``label`` (case-insensitive) and replaces them with the URL built by
+    :func:`badge_url`. Uses an atomic write (temp file + rename) to avoid
+    corrupting the README on partial write failures.
+
+    Args:
+        readme_path: Path to the README file to update.
+        pct: Coverage percentage for the new badge, or ``None`` for unknown.
+        label: Plain-text badge label to match (e.g. ``"coverage"``).
+
+    Returns:
+        ``True`` when at least one badge was replaced, ``False`` when no
+        matching badge was found.
+
+    Raises:
+        OSError: If the README cannot be read, or if the atomic write fails.
     """
     with open(readme_path, encoding="utf-8") as f:
         content = f.read()
@@ -397,9 +537,18 @@ def update_badge(readme_path: str, pct: float | None, label: str) -> bool:
 def set_output(name: str, value: str) -> None:
     """Write a GitHub Actions step output.
 
-    Falls back to a logger.info call when outside a runner.
+    Falls back to a ``logger.info`` call when outside a runner (i.e. when
+    ``GITHUB_OUTPUT`` is not set).
+
+    Args:
+        name: Output variable name. Must not contain ``\\r`` or ``\\n``.
+        value: Output value. Must not contain ``\\r`` or ``\\n``.
+
+    Raises:
+        ValueError: If ``name`` or ``value`` contains a carriage return or
+            newline, which would corrupt the GitHub Actions output file.
     """
-    if "\n" in name or "\n" in value:
+    if any(c in name or c in value for c in "\r\n"):
         raise ValueError(
             f"set_output name and value must not contain newlines: "
             f"name={name!r}, value={value!r}"
@@ -496,6 +645,19 @@ def _update_readme_badge(readme_path: str, pct: float | None, badge_label: str) 
 
 
 def main() -> int:
+    """Detect coverage, update the README badge, and enforce the threshold.
+
+    Reads all inputs from environment variables:
+
+    - ``COVERAGE_FILE``: explicit path to a coverage file; auto-detects if empty.
+    - ``README_PATH``: path to the README to update (default: ``README.md``).
+    - ``BADGE_LABEL``: alt-text label of the badge to replace (default: ``coverage``).
+    - ``FAIL_BELOW``: minimum coverage percentage; ``0`` disables the check.
+
+    Returns:
+        ``0`` on success, ``1`` on any validation or I/O failure, or when
+        coverage falls below the ``FAIL_BELOW`` threshold.
+    """
     # Empty coverage_file triggers auto-detection.
     coverage_file = os.environ.get("COVERAGE_FILE", "").strip()
     readme_path = os.environ.get("README_PATH", "README.md").strip()
