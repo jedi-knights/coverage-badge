@@ -21,7 +21,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -90,8 +90,16 @@ def parse_lcov(path: str) -> float:
     return lh / lf * 100
 
 
+_MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB
+
+
 def parse_cobertura(path: str) -> float:
     """Read the line-rate attribute from the root coverage element (0–1 scale)."""
+    size = os.path.getsize(path)
+    if size > _MAX_FILE_BYTES:
+        raise ValueError(
+            f"Coverage file is too large to parse safely: {path!r} ({size} bytes)"
+        )
     tree = ET.parse(path)
     root = tree.getroot()
     # Some generators wrap the root in a different tag; search for <coverage>.
@@ -111,9 +119,11 @@ def parse_coveralls(path: str) -> float:
     """Read covered_percent from a Coveralls-format JSON file."""
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
-    pct = data.get("covered_percent")
-    if pct is None:
+    if "covered_percent" not in data:
         raise ValueError(f"No 'covered_percent' field in Coveralls file: {path!r}")
+    pct = data["covered_percent"]
+    if pct is None:
+        raise ValueError(f"'covered_percent' is null in Coveralls file: {path!r}")
     try:
         return float(pct)
     except (ValueError, TypeError) as exc:
@@ -174,7 +184,10 @@ _SKIP_DIRS = frozenset(
 
 def _find_files(pattern: str, root: Path = Path(".")) -> Iterator[str]:
     for path in root.glob(pattern):
-        if not any(part in _SKIP_DIRS for part in path.parts):
+        # Check only the directory components relative to root (not the filename
+        # or any parent directories outside root) to avoid false positives when
+        # root itself lives inside a directory whose name matches a skip entry.
+        if not any(part in _SKIP_DIRS for part in path.relative_to(root).parts[:-1]):
             yield str(path)
 
 
@@ -214,22 +227,28 @@ _FILENAME_TO_FORMAT: dict[str, str] = {
 
 
 def _infer_format_from_content(path: str) -> str:
-    """Inspect up to 64 KB of file content to determine format when the
-    filename is non-standard. The 64 KB cap prevents memory exhaustion from
-    accidentally large files; all coverage summary keys are near the top.
+    """Inspect file content to determine format when the filename is non-standard.
+
+    Files larger than 50 MB are rejected to prevent memory exhaustion. Content
+    is read in full so JSON is parsed completely (not truncated).
     """
+    size = os.path.getsize(path)
+    if size > _MAX_FILE_BYTES:
+        raise ValueError(
+            f"Coverage file is too large to parse safely: {path!r} ({size} bytes)"
+        )
     with open(path, encoding="utf-8", errors="replace") as f:
-        head = f.read(65536)
-    stripped = head.lstrip()
+        content = f.read()
+    stripped = content.lstrip()
     if stripped.startswith("<"):
         return "cobertura"
     if stripped.startswith("{"):
         try:
-            data = json.loads(head)
+            data = json.loads(content)
         except json.JSONDecodeError as exc:
             raise ValueError(
                 f"Cannot determine coverage format for {path!r}: "
-                "file starts with '{' but is not valid JSON (first 64 KB)"
+                "file starts with '{' but is not valid JSON"
             ) from exc
         if "covered_percent" in data:
             return "coveralls"
@@ -263,13 +282,15 @@ def _shields_encode(label: str) -> str:
     """Encode a plain-text label for use in a shields.io static badge URL.
 
     shields.io convention: space → _, - → --, _ → __.
-    Remaining special characters are percent-encoded.
+    Remaining special characters are percent-encoded as UTF-8 bytes so that
+    non-BMP Unicode (code points > U+FFFF) is encoded correctly.
     """
     # Escape existing - and _ before mapping space to _.
     encoded = label.replace("-", "--").replace("_", "__").replace(" ", "_")
-    return "".join(
-        c if (c.isalnum() or c in "-_.~") else f"%{ord(c):02X}" for c in encoded
-    )
+    # quote() encodes everything except unreserved characters (ALPHA, DIGIT,
+    # - . _ ~) using UTF-8 percent-encoding, which correctly handles non-BMP
+    # characters that would otherwise produce an oversized hex escape.
+    return quote(encoded, safe="")
 
 
 def _shields_decode(label: str) -> str:
@@ -313,15 +334,17 @@ def badge_url(pct: float | None, label: str) -> str:
     encoded_label = _shields_encode(label)
     if pct is None:
         return f"https://img.shields.io/badge/{encoded_label}-unknown-lightgrey"
-    color = badge_color(pct)
+    # Round first so the color threshold and the displayed value agree.
+    pct_r = round(pct, 1)
+    color = badge_color(pct_r)
     # shields.io requires % to be percent-encoded as %25 in static badge URLs.
-    return f"https://img.shields.io/badge/{encoded_label}-{pct:.1f}%25-{color}"
+    return f"https://img.shields.io/badge/{encoded_label}-{pct_r:.1f}%25-{color}"
 
 
 # Matches any shields.io static badge URL. The label group uses -- to handle
 # shields.io's double-dash escaping for literal hyphens within a label.
 _BADGE_URL_RE = re.compile(
-    r"https://img\.shields\.io/badge/(?P<label>(?:[^-]|--)*)(?P<rest>-[^)\s\"']+)",
+    r"https://img\.shields\.io/badge/(?P<label>(?:[^-]|--)*)(?P<rest>-[^)\s\"'?]+)",
     re.IGNORECASE,
 )
 
@@ -352,7 +375,9 @@ def update_badge(readme_path: str, pct: float | None, label: str) -> bool:
 
     # Atomic write: close the fd immediately and open by name to avoid leaking
     # the descriptor if open() raises after mkstemp succeeds.
-    tmp_fd, tmp_path = tempfile.mkstemp(dir=str(Path(readme_path).resolve().parent))
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        suffix=".md.tmp", dir=str(Path(readme_path).resolve().parent)
+    )
     os.close(tmp_fd)
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
@@ -374,6 +399,11 @@ def set_output(name: str, value: str) -> None:
 
     Falls back to a logger.info call when outside a runner.
     """
+    if "\n" in name or "\n" in value:
+        raise ValueError(
+            f"set_output name and value must not contain newlines: "
+            f"name={name!r}, value={value!r}"
+        )
     output_file = os.environ.get("GITHUB_OUTPUT")
     if output_file:
         with open(output_file, "a", encoding="utf-8") as f:
@@ -388,7 +418,7 @@ def set_output(name: str, value: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _parse_fail_below(badge_label: str) -> float | None:
+def _parse_inputs(badge_label: str) -> float | None:
     """Validate badge_label is non-empty and parse the FAIL_BELOW env var.
 
     Returns the float threshold on success, or None on any validation failure
@@ -470,7 +500,7 @@ def main() -> int:
     coverage_file = os.environ.get("COVERAGE_FILE", "").strip()
     readme_path = os.environ.get("README_PATH", "README.md").strip()
     badge_label = os.environ.get("BADGE_LABEL", "coverage").strip()
-    fail_below = _parse_fail_below(badge_label)
+    fail_below = _parse_inputs(badge_label)
     if fail_below is None:
         return 1
 

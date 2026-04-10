@@ -177,10 +177,10 @@ def test_parse_coveralls(tmp_path, data, expected):
 @pytest.mark.parametrize(
     "data,match",
     [
-        ({}, "covered_percent"),
+        ({}, "No 'covered_percent'"),
         ({"covered_percent": "bad"}, "Non-numeric"),
-        # JSON null → Python None → dict.get() returns None → "missing key" guard
-        ({"covered_percent": None}, "covered_percent"),
+        # JSON null → Python None — distinguished from missing key by "is null"
+        ({"covered_percent": None}, "is null"),
     ],
     ids=["missing-key", "non-numeric", "null-value"],
 )
@@ -597,7 +597,7 @@ def test_set_output_falls_back_to_logger(monkeypatch, caplog):
 
 
 # ---------------------------------------------------------------------------
-# _parse_fail_below
+# _parse_inputs
 # ---------------------------------------------------------------------------
 
 
@@ -612,12 +612,12 @@ def test_set_output_falls_back_to_logger(monkeypatch, caplog):
     ],
     ids=["integer", "float", "zero", "max", "absent"],
 )
-def test_parse_fail_below_valid(monkeypatch, env_value, expected):
+def test_parse_inputs_valid(monkeypatch, env_value, expected):
     if env_value is None:
         monkeypatch.delenv("FAIL_BELOW", raising=False)
     else:
         monkeypatch.setenv("FAIL_BELOW", env_value)
-    assert ub._parse_fail_below("coverage") == pytest.approx(expected)
+    assert ub._parse_inputs("coverage") == pytest.approx(expected)
 
 
 @pytest.mark.parametrize(
@@ -625,14 +625,14 @@ def test_parse_fail_below_valid(monkeypatch, env_value, expected):
     ["abc", "-1", "101"],
     ids=["non-numeric", "negative", "over-100"],
 )
-def test_parse_fail_below_invalid_returns_none(monkeypatch, env_value):
+def test_parse_inputs_invalid_returns_none(monkeypatch, env_value):
     monkeypatch.setenv("FAIL_BELOW", env_value)
-    assert ub._parse_fail_below("coverage") is None
+    assert ub._parse_inputs("coverage") is None
 
 
-def test_parse_fail_below_empty_label_returns_none(monkeypatch):
+def test_parse_inputs_empty_label_returns_none(monkeypatch):
     monkeypatch.delenv("FAIL_BELOW", raising=False)
-    assert ub._parse_fail_below("") is None
+    assert ub._parse_inputs("") is None
 
 
 # ---------------------------------------------------------------------------
@@ -876,3 +876,135 @@ def test_update_badge_cleans_up_temp_file_on_write_error(tmp_path, monkeypatch):
 
     # Only the original README should remain — no leaked temp files.
     assert set(tmp_path.iterdir()) == {f}
+
+
+# ---------------------------------------------------------------------------
+# parse_cobertura — size guard
+# ---------------------------------------------------------------------------
+
+
+def test_parse_cobertura_large_file_raises(tmp_path, monkeypatch):
+    """Files larger than 50 MB must be rejected before ET.parse."""
+    f = tmp_path / "coverage.xml"
+    f.write_text('<coverage line-rate="0.9"></coverage>')
+    monkeypatch.setattr(ub.os.path, "getsize", lambda _p: 50 * 1024 * 1024 + 1)
+    with pytest.raises(ValueError, match="too large"):
+        ub.parse_cobertura(str(f))
+
+
+# ---------------------------------------------------------------------------
+# _infer_format_from_content — size guard + full json.load
+# ---------------------------------------------------------------------------
+
+
+def test_infer_format_from_content_large_file_raises(tmp_path, monkeypatch):
+    """Files larger than 50 MB must be rejected during content inspection."""
+    f = tmp_path / "my-coverage.dat"
+    f.write_text(_COVERALLS_75)
+    monkeypatch.setattr(ub.os.path, "getsize", lambda _p: 50 * 1024 * 1024 + 1)
+    with pytest.raises(ValueError, match="too large"):
+        ub._infer_format_from_content(str(f))
+
+
+# ---------------------------------------------------------------------------
+# _find_files — relative_to root for skip-dir check
+# ---------------------------------------------------------------------------
+
+
+def test_find_files_root_in_skip_dir_finds_files(tmp_path):
+    """Files at the search root must be found even when the root's absolute
+    path passes through a skip-dir component."""
+    # root path deliberately goes through "vendor/" — a _SKIP_DIRS entry
+    myproject = tmp_path / "vendor" / "myproject"
+    myproject.mkdir(parents=True)
+    (myproject / "lcov.info").write_text(_LCOV_80)
+    results = list(ub._find_files("**/lcov.info", myproject))
+    assert len(results) == 1
+
+
+# ---------------------------------------------------------------------------
+# set_output — newline injection guard
+# ---------------------------------------------------------------------------
+
+
+def test_set_output_newline_in_name_raises(tmp_path, monkeypatch):
+    output_file = tmp_path / "output"
+    output_file.touch()
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output_file))
+    with pytest.raises(ValueError, match="newline"):
+        ub.set_output("bad\nname", "value")
+
+
+def test_set_output_newline_in_value_raises(tmp_path, monkeypatch):
+    output_file = tmp_path / "output"
+    output_file.touch()
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output_file))
+    with pytest.raises(ValueError, match="newline"):
+        ub.set_output("name", "bad\nvalue")
+
+
+# ---------------------------------------------------------------------------
+# update_badge — regex must stop at ? (query string preserved)
+# ---------------------------------------------------------------------------
+
+
+def test_update_badge_preserves_query_string(tmp_path):
+    """Query parameters appended to a badge URL must survive the replacement."""
+    readme_content = (
+        "![coverage](https://img.shields.io/badge/coverage-0%25-red?branch=main)\n"
+    )
+    f = _write_readme(tmp_path, readme_content)
+    ub.update_badge(str(f), 87.5, "coverage")
+    result = f.read_text()
+    assert "87.5%25" in result
+    assert "?branch=main" in result
+
+
+# ---------------------------------------------------------------------------
+# badge_url — rounding consistency between color and percentage string
+# ---------------------------------------------------------------------------
+
+
+def test_badge_url_rounding_matches_color():
+    """badge_url at 74.95% must round to 75.0 before choosing the color,
+    so the URL shows 75.0%25-green (not 75.0%25-yellow)."""
+    url = ub.badge_url(74.95, "coverage")
+    assert "75.0%25" in url
+    assert "green" in url
+
+
+# ---------------------------------------------------------------------------
+# _shields_encode — non-BMP Unicode characters
+# ---------------------------------------------------------------------------
+
+
+def test_shields_encode_non_bmp():
+    """Code points above U+FFFF must be percent-encoded as UTF-8 bytes,
+    not as a single multi-digit hex escape."""
+    # U+1F600 GRINNING FACE — a non-BMP character (4 UTF-8 bytes)
+    encoded = ub._shields_encode("\U0001f600")
+    # Must be percent-encoded (contains %)
+    assert "%" in encoded
+    # Must NOT contain the raw character
+    assert "\U0001f600" not in encoded
+    # Must not be the broken single-codepoint encoding %1F600
+    assert encoded != "%1F600"
+
+
+# ---------------------------------------------------------------------------
+# parse_coveralls — null value vs missing key must produce distinct errors
+# ---------------------------------------------------------------------------
+
+
+def test_parse_coveralls_explicit_none_has_distinct_error(tmp_path):
+    """covered_percent: null must produce an error different from missing key.
+
+    The match pattern "is null" is used deliberately — it does not appear in
+    the current code's "No 'covered_percent' field" message, so the test is a
+    true RED until the implementation is updated to say "is null".
+    """
+    f = tmp_path / "data.json"
+    f.write_text(json.dumps({"covered_percent": None}))
+    # The message for null must say "is null" (not "No ... field" as for missing key)
+    with pytest.raises(ValueError, match="is null"):
+        ub.parse_coveralls(str(f))
