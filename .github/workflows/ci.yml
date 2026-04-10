@@ -10,7 +10,27 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - '**/*.py'
+              - 'action.yml'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'tasks.py'
+              - '.github/workflows/**'
+
   lint:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -19,6 +39,8 @@ jobs:
       - run: uv run invoke lint
 
   test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -26,9 +48,20 @@ jobs:
       - run: uv sync --frozen
       - run: uv run invoke test
 
+  ci:
+    if: always()
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          if [[ "${{ needs.lint.result }}" == "failure" || "${{ needs.test.result }}" == "failure" ]]; then
+            exit 1
+          fi
+
   badge:
     needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
