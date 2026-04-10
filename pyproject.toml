@@ -27,4 +27,4 @@ max-complexity = 7
 [tool.pytest.ini_options]
 pythonpath = ["scripts"]
 testpaths = ["tests"]
-addopts = "--cov=update_badge --cov-fail-under=95 --cov-report=term-missing"
+addopts = "--cov=update_badge --cov-fail-under=95 --cov-report=term-missing --cov-report=xml"
