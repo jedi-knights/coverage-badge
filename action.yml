@@ -1,7 +1,7 @@
-name: coverage-badge
-description: >
-  Detect coverage output files and update the shields.io badge in README.md.
-  Supports LCOV, Cobertura XML, Coveralls JSON, and Istanbul/NYC JSON.
+name: JK Coverage Badge
+description: >-
+  Read a coverage file and update the shields.io badge in your README.
+  Supports LCOV, Cobertura, Coveralls, and Istanbul.
 author: jedi-knights
 
 branding:
