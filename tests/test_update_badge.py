@@ -873,6 +873,22 @@ def test_main_outputs_coverage_percentage(tmp_path, monkeypatch, caplog):
     assert any("80.0%" in r.message for r in caplog.records)
 
 
+def test_main_coverage_parse_error_returns_1(tmp_path, monkeypatch):
+    """main() returns 1 when a coverage file is found but cannot be parsed."""
+    bad_xml = tmp_path / "coverage.xml"
+    bad_xml.write_text("not valid xml <><")
+    readme = _write_readme(tmp_path, f"{_BADGE}\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("COVERAGE_FILE", str(bad_xml))
+    monkeypatch.setenv("README_PATH", str(readme))
+    monkeypatch.setenv("BADGE_LABEL", "coverage")
+    monkeypatch.delenv("FAIL_BELOW", raising=False)
+    monkeypatch.delenv("REPORT_URL", raising=False)
+    monkeypatch.delenv("REPO_VISIBILITY", raising=False)
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    assert ub.main() == 1
+
+
 def test_main_update_badge_oserror_returns_1(tmp_path, monkeypatch):
     # Pass a directory as README_PATH so update_badge raises OSError when reading it.
     _write_lcov(tmp_path)
@@ -1062,6 +1078,52 @@ def test_parse_coveralls_explicit_none_has_distinct_error(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# _GitHubActionsFormatter and _configure_logging
+# ---------------------------------------------------------------------------
+
+
+def test_github_actions_formatter_error_level():
+    """ERROR-level records are prefixed with the ::error:: annotation command."""
+    formatter = ub._GitHubActionsFormatter()
+    record = logging.LogRecord(
+        "test", logging.ERROR, "", 0, "something failed", (), None
+    )
+    assert formatter.format(record) == "::error::something failed"
+
+
+def test_github_actions_formatter_warning_level():
+    """WARNING-level records are prefixed with the ::warning:: annotation command."""
+    formatter = ub._GitHubActionsFormatter()
+    record = logging.LogRecord("test", logging.WARNING, "", 0, "be careful", (), None)
+    assert formatter.format(record) == "::warning::be careful"
+
+
+def test_github_actions_formatter_info_level():
+    """INFO-level records are returned as plain text with no annotation prefix."""
+    formatter = ub._GitHubActionsFormatter()
+    record = logging.LogRecord("test", logging.INFO, "", 0, "just info", (), None)
+    assert formatter.format(record) == "just info"
+
+
+def test_configure_logging_adds_handler_and_sets_level():
+    """_configure_logging attaches a StreamHandler with _GitHubActionsFormatter."""
+    initial_handlers = list(ub.logger.handlers)
+    initial_level = ub.logger.level
+    try:
+        ub._configure_logging()
+        assert ub.logger.level == logging.DEBUG
+        new_handlers = [h for h in ub.logger.handlers if h not in initial_handlers]
+        assert len(new_handlers) == 1
+        assert isinstance(new_handlers[0], logging.StreamHandler)
+        assert isinstance(new_handlers[0].formatter, ub._GitHubActionsFormatter)
+    finally:
+        for h in list(ub.logger.handlers):
+            if h not in initial_handlers:
+                ub.logger.removeHandler(h)
+        ub.logger.setLevel(initial_level)
+
+
+# ---------------------------------------------------------------------------
 # update_badge — report_url (linked badge support)
 # ---------------------------------------------------------------------------
 
@@ -1154,6 +1216,17 @@ def test_update_badge_with_report_url_does_not_double_wrap_linked_badge(tmp_path
     result = f.read_text()
     assert result.count("[![") == 1
     assert "](https://new.com/)" in result
+
+
+def test_update_badge_with_report_url_skips_linked_badge_with_different_label(tmp_path):
+    """A linked badge whose label does not match the target is left unchanged."""
+    other_linked = "[![other](https://img.shields.io/badge/other-50%25-red)](https://old.example.com/)"
+    readme = _write_readme(tmp_path, other_linked + "\n")
+    result = ub.update_badge(
+        str(readme), 90.0, "coverage", report_url="https://new.example.com/"
+    )
+    assert result is False
+    assert readme.read_text() == other_linked + "\n"
 
 
 def test_update_badge_invalid_report_url_raises(tmp_path):
