@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0 (2026-04-11)
+
+### Features
+
+- **badge:** add opt-in report-url input for linked coverage badge (e031f79)
+
 ## 0.2.1 (2026-04-10)
 
 ### Bug Fixes
