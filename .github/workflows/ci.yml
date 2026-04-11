@@ -82,7 +82,7 @@ jobs:
           README_PATH: README.md
           BADGE_LABEL: coverage
           FAIL_BELOW: "0"
-          REPORT_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+          REPORT_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/?v=${{ github.run_number }}
           REPO_VISIBILITY: ${{ github.repository_visibility }}
         run: python3 scripts/update_badge.py
       - name: Commit badge
