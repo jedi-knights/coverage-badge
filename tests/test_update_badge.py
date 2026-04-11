@@ -1,6 +1,7 @@
 """Functional unit tests for scripts/update_badge.py."""
 
 import json
+import logging
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -56,6 +57,8 @@ def _setup_main(
     monkeypatch.setenv("BADGE_LABEL", badge_label)
     monkeypatch.delenv("COVERAGE_FILE", raising=False)
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    monkeypatch.delenv("REPORT_URL", raising=False)
+    monkeypatch.delenv("REPO_VISIBILITY", raising=False)
     if fail_below is not None:
         monkeypatch.setenv("FAIL_BELOW", fail_below)
     else:
@@ -312,8 +315,6 @@ def test_detect_and_parse_no_file_raises(tmp_path):
 
 def test_detect_and_parse_multiple_matches_warns(tmp_path, caplog):
     """When multiple files match a format tier, a warning must be logged."""
-    import logging
-
     (tmp_path / "coverage").mkdir()
     (tmp_path / "lcov.info").write_text("LF:10\nLH:8\n")
     (tmp_path / "coverage" / "lcov.info").write_text("LF:10\nLH:5\n")
@@ -610,8 +611,6 @@ def test_set_output_appends_multiple_values(tmp_path, monkeypatch):
 
 def test_set_output_falls_back_to_logger(monkeypatch, caplog):
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
-    import logging
-
     with caplog.at_level(logging.INFO, logger="update_badge"):
         ub.set_output("coverage-percentage", "87.5")
     assert any("coverage-percentage=87.5" in r.message for r in caplog.records)
@@ -828,6 +827,8 @@ def test_main_no_coverage_file_updates_badge_to_unknown(tmp_path, monkeypatch):
     monkeypatch.delenv("COVERAGE_FILE", raising=False)
     monkeypatch.delenv("FAIL_BELOW", raising=False)
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    monkeypatch.delenv("REPORT_URL", raising=False)
+    monkeypatch.delenv("REPO_VISIBILITY", raising=False)
     assert ub.main() == 0
     assert "unknown" in readme.read_text()
     assert "lightgrey" in readme.read_text()
@@ -837,8 +838,6 @@ def test_main_no_coverage_file_no_badge_warns_and_returns_0(
     tmp_path, monkeypatch, caplog
 ):
     # No coverage files and no matching badge — still returns 0 with a warning.
-    import logging
-
     readme = _write_readme(tmp_path, "No badge here.\n")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("BADGE_LABEL", "coverage")
@@ -846,6 +845,8 @@ def test_main_no_coverage_file_no_badge_warns_and_returns_0(
     monkeypatch.delenv("COVERAGE_FILE", raising=False)
     monkeypatch.delenv("FAIL_BELOW", raising=False)
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    monkeypatch.delenv("REPORT_URL", raising=False)
+    monkeypatch.delenv("REPO_VISIBILITY", raising=False)
     with caplog.at_level(logging.WARNING, logger="update_badge"):
         assert ub.main() == 0
     assert any("badge updated to show 'unknown'" in r.message for r in caplog.records)
@@ -855,6 +856,8 @@ def test_main_invalid_fail_below_returns_1(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("BADGE_LABEL", "coverage")
     monkeypatch.setenv("FAIL_BELOW", "not-a-number")
+    monkeypatch.delenv("REPORT_URL", raising=False)
+    monkeypatch.delenv("REPO_VISIBILITY", raising=False)
     assert ub.main() == 1
 
 
@@ -864,8 +867,6 @@ def test_main_badge_not_found_warns_but_returns_0(tmp_path, monkeypatch):
 
 
 def test_main_outputs_coverage_percentage(tmp_path, monkeypatch, caplog):
-    import logging
-
     _setup_main(tmp_path, monkeypatch)
     with caplog.at_level(logging.INFO, logger="update_badge"):
         ub.main()
@@ -881,6 +882,8 @@ def test_main_update_badge_oserror_returns_1(tmp_path, monkeypatch):
     monkeypatch.delenv("COVERAGE_FILE", raising=False)
     monkeypatch.delenv("FAIL_BELOW", raising=False)
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    monkeypatch.delenv("REPORT_URL", raising=False)
+    monkeypatch.delenv("REPO_VISIBILITY", raising=False)
     assert ub.main() == 1
 
 
@@ -1056,3 +1059,181 @@ def test_parse_coveralls_explicit_none_has_distinct_error(tmp_path):
     # The message for null must say "is null" (not "No ... field" as for missing key)
     with pytest.raises(ValueError, match="is null"):
         ub.parse_coveralls(str(f))
+
+
+# ---------------------------------------------------------------------------
+# update_badge — report_url (linked badge support)
+# ---------------------------------------------------------------------------
+
+
+def test_update_badge_with_report_url_wraps_bare_badge_in_link(tmp_path):
+    """A bare badge is converted to a linked badge when report_url is provided."""
+    f = _write_readme(
+        tmp_path, "![coverage](https://img.shields.io/badge/coverage-0%25-red)\n"
+    )
+    assert (
+        ub.update_badge(str(f), 80.0, "coverage", report_url="https://example.com/")
+        is True
+    )
+    result = f.read_text()
+    assert "[![coverage](" in result
+    assert ")](https://example.com/)" in result
+    assert "80.0%25" in result
+
+
+def test_update_badge_with_report_url_updates_linked_badge_urls(tmp_path):
+    """An existing linked badge has both the inner URL and outer link updated."""
+    f = _write_readme(
+        tmp_path,
+        "[![coverage](https://img.shields.io/badge/coverage-0%25-red)](https://old.com/)\n",
+    )
+    assert (
+        ub.update_badge(str(f), 90.0, "coverage", report_url="https://new.com/") is True
+    )
+    result = f.read_text()
+    assert "badge/coverage-90.0%25-brightgreen" in result
+    assert "](https://new.com/)" in result
+    assert "https://old.com/" not in result
+
+
+def test_update_badge_without_report_url_preserves_linked_badge_outer_link(tmp_path):
+    """When report_url is absent, an existing linked badge keeps its outer link."""
+    f = _write_readme(
+        tmp_path,
+        "[![coverage](https://img.shields.io/badge/coverage-0%25-red)](https://existing.com/)\n",
+    )
+    ub.update_badge(str(f), 80.0, "coverage")
+    result = f.read_text()
+    assert "80.0%25" in result
+    assert "[![coverage](" in result
+    assert "](https://existing.com/)" in result
+
+
+def test_update_badge_with_report_url_preserves_alt_text(tmp_path):
+    """The markdown alt-text is preserved through bare-to-linked conversion."""
+    f = _write_readme(
+        tmp_path,
+        "![my coverage](https://img.shields.io/badge/my_coverage-0%25-red)\n",
+    )
+    ub.update_badge(str(f), 80.0, "my coverage", report_url="https://example.com/")
+    assert "[![my coverage](" in f.read_text()
+
+
+def test_update_badge_with_report_url_returns_false_when_no_match(tmp_path):
+    """Returns False when no matching badge exists, even with a report_url."""
+    f = _write_readme(tmp_path, "No badge here.\n")
+    assert (
+        ub.update_badge(str(f), 80.0, "coverage", report_url="https://example.com/")
+        is False
+    )
+
+
+def test_update_badge_with_report_url_handles_mixed_linked_and_bare(tmp_path):
+    """README with both a linked and a bare badge: both are updated, no double-wrap."""
+    content = (
+        "[![coverage](https://img.shields.io/badge/coverage-0%25-red)](https://old.com/)\n"
+        "![coverage](https://img.shields.io/badge/coverage-0%25-red)\n"
+    )
+    f = _write_readme(tmp_path, content)
+    assert (
+        ub.update_badge(str(f), 80.0, "coverage", report_url="https://new.com/") is True
+    )
+    result = f.read_text()
+    assert result.count("[![coverage](") == 2
+    assert result.count("](https://new.com/)") == 2
+    assert "https://old.com/" not in result
+
+
+def test_update_badge_with_report_url_does_not_double_wrap_linked_badge(tmp_path):
+    """A linked badge processed with report_url must not be double-wrapped."""
+    f = _write_readme(
+        tmp_path,
+        "[![coverage](https://img.shields.io/badge/coverage-0%25-red)](https://old.com/)\n",
+    )
+    ub.update_badge(str(f), 80.0, "coverage", report_url="https://new.com/")
+    result = f.read_text()
+    assert result.count("[![") == 1
+    assert "](https://new.com/)" in result
+
+
+def test_update_badge_invalid_report_url_raises(tmp_path):
+    """report_url that does not start with http:// or https:// raises ValueError."""
+    f = _write_readme(
+        tmp_path, "![coverage](https://img.shields.io/badge/coverage-0%25-red)\n"
+    )
+    with pytest.raises(ValueError, match="http"):
+        ub.update_badge(str(f), 80.0, "coverage", report_url="javascript:alert(1)")
+
+
+# ---------------------------------------------------------------------------
+# main — REPORT_URL and REPO_VISIBILITY
+# ---------------------------------------------------------------------------
+
+
+def test_main_with_report_url_creates_linked_badge(tmp_path, monkeypatch):
+    """REPORT_URL causes the README badge to become a clickable link."""
+    _, readme = _setup_main(tmp_path, monkeypatch)
+    monkeypatch.setenv("REPORT_URL", "https://example.com/coverage/")
+    assert ub.main() == 0
+    result = readme.read_text()
+    assert "[![coverage](" in result
+    assert ")](https://example.com/coverage/)" in result
+
+
+def test_main_private_repo_with_report_url_emits_warning(tmp_path, monkeypatch, caplog):
+    """A private repo with REPORT_URL emits a Pages Enterprise Cloud warning."""
+    _setup_main(tmp_path, monkeypatch)
+    monkeypatch.setenv("REPORT_URL", "https://example.com/")
+    monkeypatch.setenv("REPO_VISIBILITY", "private")
+    with caplog.at_level(logging.WARNING, logger="update_badge"):
+        assert ub.main() == 0
+    assert any("Enterprise Cloud" in r.message for r in caplog.records)
+
+
+def test_main_internal_repo_with_report_url_emits_warning(
+    tmp_path, monkeypatch, caplog
+):
+    """An internal repo with REPORT_URL emits a Pages Enterprise Cloud warning."""
+    _setup_main(tmp_path, monkeypatch)
+    monkeypatch.setenv("REPORT_URL", "https://example.com/")
+    monkeypatch.setenv("REPO_VISIBILITY", "internal")
+    with caplog.at_level(logging.WARNING, logger="update_badge"):
+        assert ub.main() == 0
+    assert any("Enterprise Cloud" in r.message for r in caplog.records)
+
+
+def test_main_public_repo_with_report_url_no_visibility_warning(
+    tmp_path, monkeypatch, caplog
+):
+    """A public repo with REPORT_URL does not emit a Pages warning."""
+    _setup_main(tmp_path, monkeypatch)
+    monkeypatch.setenv("REPORT_URL", "https://example.com/")
+    monkeypatch.setenv("REPO_VISIBILITY", "public")
+    with caplog.at_level(logging.WARNING, logger="update_badge"):
+        assert ub.main() == 0
+    assert not any("Enterprise Cloud" in r.message for r in caplog.records)
+
+
+def test_main_without_report_url_does_not_emit_visibility_warning(
+    tmp_path, monkeypatch, caplog
+):
+    """Without REPORT_URL, no Pages visibility warning is emitted regardless of
+    visibility."""
+    _setup_main(tmp_path, monkeypatch)
+    monkeypatch.setenv("REPO_VISIBILITY", "private")
+    with caplog.at_level(logging.WARNING, logger="update_badge"):
+        assert ub.main() == 0
+    assert not any("Enterprise Cloud" in r.message for r in caplog.records)
+
+
+def test_main_missing_repo_visibility_with_report_url_no_warning(
+    tmp_path, monkeypatch, caplog
+):
+    """When REPO_VISIBILITY is absent entirely, no warning is emitted (assume
+    public)."""
+    _setup_main(tmp_path, monkeypatch)
+    monkeypatch.setenv("REPORT_URL", "https://example.com/")
+    # REPO_VISIBILITY already cleared by _setup_main
+    with caplog.at_level(logging.WARNING, logger="update_badge"):
+        assert ub.main() == 0
+    assert not any("Enterprise Cloud" in r.message for r in caplog.records)

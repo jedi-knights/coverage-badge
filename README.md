@@ -15,6 +15,7 @@ A language-agnostic GitHub Action that reads a coverage output file and updates 
 - [Installation](#installation)
 - [Usage](#usage)
   - [Keep the badge in sync with main](#keep-the-badge-in-sync-with-main)
+  - [Linked coverage report (GitHub Pages)](#linked-coverage-report-github-pages)
 - [Configuration](#configuration)
 - [Outputs](#outputs)
 - [Supported Formats](#supported-formats)
@@ -41,6 +42,7 @@ It works with any language that produces LCOV, Cobertura XML, Coveralls JSON, or
 - Supports LCOV, Cobertura XML, Coveralls JSON, and Istanbul/NYC JSON
 - Updates the shields.io badge in any README without an external service
 - Optional threshold gate — fails the job if coverage drops below a minimum
+- Optional linked badge — set `report-url` to point the badge at a GitHub Pages HTML report
 - Single output (`coverage-percentage`) for use in downstream steps
 - No dependencies beyond Python 3, which is pre-installed on all GitHub-hosted runners
 
@@ -171,6 +173,95 @@ jobs:
 > **Note:** Include `[skip ci]` in the commit message. Without it, the badge commit triggers
 > another CI run, which triggers another badge commit — an infinite loop.
 
+### Linked coverage report (GitHub Pages)
+
+Set `report-url` to make the badge a clickable link to a hosted HTML coverage report. The action
+rewrites the README badge from a bare image to a linked image:
+
+```markdown
+<!-- before -->
+![coverage](https://img.shields.io/badge/coverage-87.5%25-green)
+
+<!-- after -->
+[![coverage](https://img.shields.io/badge/coverage-87.5%25-green)](https://owner.github.io/repo/)
+```
+
+#### GitHub Pages prerequisites
+
+Before the first deploy you must enable GitHub Pages in the repository settings:
+
+1. Go to **Settings → Pages → Build and deployment → Source**
+2. Select **GitHub Actions**
+
+> **Private repositories:** GitHub Pages for private repositories requires **GitHub Enterprise
+> Cloud**. Free, Pro, and Team plans do not support it. The action will emit a warning when it
+> detects a private or internal repository; the subsequent deploy step will fail with HTTP 422 if
+> your plan does not include private Pages.
+
+#### Full workflow example (Python / pytest-cov)
+
+```yaml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pytest --cov=src --cov-report=xml --cov-report=html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: htmlcov/
+
+  badge:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # commit badge to README
+      pages: write          # deploy to GitHub Pages
+      id-token: write       # OIDC token for Pages deploy
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_TOKEN }}
+
+      - run: pytest --cov=src --cov-report=xml --cov-report=html
+
+      - uses: jedi-knights/coverage-badge@v0
+        with:
+          report-url: https://owner.github.io/repo/
+
+      - name: Commit badge
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git diff --quiet README.md || \
+            (git add README.md && \
+             git commit -m "chore: update coverage badge [skip ci]" && \
+             git push)
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: htmlcov/
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
+```
+
+#### Per-language HTML report notes
+
+| Language / Tool | HTML command | Output directory | Notes |
+|:---|:---|:---|:---|
+| Python — pytest-cov | `pytest --cov=src --cov-report=html` | `htmlcov/` | No extra steps; produces `index.html` plus per-file pages |
+| JavaScript — Jest | `jest --coverage --coverageReporters=html` | `coverage/lcov-report/` | Same navigable structure |
+| JavaScript — NYC | `nyc --reporter=html mocha` | `coverage/` | Same navigable structure |
+| Go — go test | `go tool cover -html=coverage.out -o coverage-report/index.html` | `coverage-report/` | Single flat page; must be named `index.html` for Pages to serve it |
+| Lua / C / Rust — LCOV | `genhtml lcov.info --output-directory coverage/html` | `coverage/html/` | Requires `sudo apt-get install -y lcov` on `ubuntu-latest` before this step |
+
 ## Configuration
 
 | Input | Default | Description |
@@ -179,6 +270,7 @@ jobs:
 | `readme-path` | `README.md` | Path to the README file containing the badge to update. |
 | `badge-label` | `coverage` | The alt-text label of the badge to update — the text inside `![...]`. Must match your badge exactly. |
 | `fail-below` | `"0"` | Minimum required coverage percentage. `"0"` disables the check. |
+| `report-url` | _(none)_ | URL of the HTML coverage report to link from the badge (e.g. `https://owner.github.io/repo/`). When set, the badge becomes a clickable link. See [Linked coverage report](#linked-coverage-report-github-pages). |
 
 ## Outputs
 

@@ -1,6 +1,6 @@
 # ADR-0001: Linked Coverage Report via GitHub Pages
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-04-10
 **Author:** Omar Crosby
 
