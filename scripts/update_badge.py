@@ -784,7 +784,7 @@ def main() -> int:
     # Empty coverage_file triggers auto-detection.
     coverage_file = os.environ.get("COVERAGE_FILE", "").strip()
     readme_path = os.environ.get("README_PATH", "README.md").strip()
-    badge_label = os.environ.get("BADGE_LABEL", "coverage").strip()
+    badge_label = os.environ.get("BADGE_LABEL", "Coverage").strip()
     report_url = os.environ.get("REPORT_URL", "").strip()
     fail_below = _parse_inputs(badge_label)
     if fail_below is None:

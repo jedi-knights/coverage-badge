@@ -5,7 +5,7 @@ A language-agnostic GitHub Action that reads a coverage output file and updates 
 ![CI](https://github.com/jedi-knights/coverage-badge/actions/workflows/ci.yml/badge.svg?branch=main)
 ![Release](https://github.com/jedi-knights/coverage-badge/actions/workflows/release.yml/badge.svg?branch=main)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![coverage](https://img.shields.io/badge/coverage-100.0%25-brightgreen)](https://jedi-knights.github.io/coverage-badge/?v=42)
+[![Coverage](https://img.shields.io/badge/Coverage-100.0%25-brightgreen)](https://jedi-knights.github.io/coverage-badge/)
 
 ## Table of Contents
 
@@ -180,10 +180,10 @@ rewrites the README badge from a bare image to a linked image:
 
 ```markdown
 <!-- before -->
-[![coverage](https://img.shields.io/badge/coverage-100.0%25-brightgreen)](https://jedi-knights.github.io/coverage-badge/?v=42)
+![Coverage](https://img.shields.io/badge/Coverage-87.5%25-green)
 
 <!-- after -->
-[![coverage](https://img.shields.io/badge/coverage-100.0%25-brightgreen)](https://jedi-knights.github.io/coverage-badge/?v=42)
+[![Coverage](https://img.shields.io/badge/Coverage-87.5%25-green)](https://owner.github.io/repo/)
 ```
 
 #### GitHub Pages prerequisites
@@ -274,7 +274,7 @@ jobs:
 |:---|:---|:---|
 | `coverage-file` | _(auto-detect)_ | Explicit path to a coverage file. If omitted, the action searches the working directory for supported files in priority order. |
 | `readme-path` | `README.md` | Path to the README file containing the badge to update. |
-| `badge-label` | `coverage` | The alt-text label of the badge to update — the text inside `![...]`. Must match your badge exactly. |
+| `badge-label` | `Coverage` | The alt-text label of the badge to update — the text inside `![...]`. Must match your badge exactly. |
 | `fail-below` | `"0"` | Minimum required coverage percentage. `"0"` disables the check. |
 | `report-url` | _(none)_ | URL of the HTML coverage report to link from the badge (e.g. `https://owner.github.io/repo/`). When set, the badge becomes a clickable link. See [Linked coverage report](#linked-coverage-report-github-pages). |
 
@@ -306,10 +306,10 @@ To use a file with a non-standard name or path, set the `coverage-file` input ex
 
 Add a placeholder badge to your README before the first run. The action matches the badge by its
 alt-text label and rewrites the URL — the starting URL does not matter, but the label must match
-the `badge-label` input (default: `coverage`):
+the `badge-label` input (default: `Coverage`):
 
 ```markdown
-[![coverage](https://img.shields.io/badge/coverage-100.0%25-brightgreen)](https://jedi-knights.github.io/coverage-badge/?v=42)
+![Coverage](https://img.shields.io/badge/Coverage-0%25-red)
 ```
 
 On the first push to `main` after setup, the action replaces `0%` with the real percentage and
@@ -374,7 +374,7 @@ If your README contains badges with different labels (e.g. `coverage` and `branc
 - uses: jedi-knights/coverage-badge@v0
   with:
     coverage-file: coverage/lcov.info
-    badge-label: coverage
+    badge-label: Coverage
 
 - uses: jedi-knights/coverage-badge@v0
   with:

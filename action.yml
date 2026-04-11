@@ -25,7 +25,7 @@ inputs:
       The alt-text label of the badge to update — the text inside ![...].
       Must match the label in your existing badge exactly.
     required: false
-    default: coverage
+    default: Coverage
   fail-below:
     description: Exit non-zero if coverage is below this percentage. "0" disables the check.
     required: false
