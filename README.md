@@ -5,7 +5,7 @@ A language-agnostic GitHub Action that reads a coverage output file and updates 
 ![CI](https://github.com/jedi-knights/coverage-badge/actions/workflows/ci.yml/badge.svg?branch=main)
 ![Release](https://github.com/jedi-knights/coverage-badge/actions/workflows/release.yml/badge.svg?branch=main)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![coverage](https://img.shields.io/badge/coverage-100.0%25-brightgreen)](https://jedi-knights.github.io/coverage-badge/)
+[![coverage](https://img.shields.io/badge/coverage-100.0%25-brightgreen)](https://jedi-knights.github.io/coverage-badge/?v=42)
 
 ## Table of Contents
 
@@ -180,10 +180,10 @@ rewrites the README badge from a bare image to a linked image:
 
 ```markdown
 <!-- before -->
-[![coverage](https://img.shields.io/badge/coverage-100.0%25-brightgreen)](https://jedi-knights.github.io/coverage-badge/)
+[![coverage](https://img.shields.io/badge/coverage-100.0%25-brightgreen)](https://jedi-knights.github.io/coverage-badge/?v=42)
 
 <!-- after -->
-[![coverage](https://img.shields.io/badge/coverage-100.0%25-brightgreen)](https://jedi-knights.github.io/coverage-badge/)
+[![coverage](https://img.shields.io/badge/coverage-100.0%25-brightgreen)](https://jedi-knights.github.io/coverage-badge/?v=42)
 ```
 
 #### GitHub Pages prerequisites
@@ -309,7 +309,7 @@ alt-text label and rewrites the URL — the starting URL does not matter, but th
 the `badge-label` input (default: `coverage`):
 
 ```markdown
-[![coverage](https://img.shields.io/badge/coverage-100.0%25-brightgreen)](https://jedi-knights.github.io/coverage-badge/)
+[![coverage](https://img.shields.io/badge/coverage-100.0%25-brightgreen)](https://jedi-knights.github.io/coverage-badge/?v=42)
 ```
 
 On the first push to `main` after setup, the action replaces `0%` with the real percentage and
