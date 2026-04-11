@@ -233,7 +233,7 @@ jobs:
 
       - uses: jedi-knights/coverage-badge@v0
         with:
-          report-url: https://owner.github.io/repo/
+          report-url: https://owner.github.io/repo/?v=${{ github.run_number }}
 
       - name: Commit badge
         run: |
@@ -251,6 +251,12 @@ jobs:
       - id: deploy
         uses: actions/deploy-pages@v4
 ```
+
+> **Cache-busting:** Append `?v=${{ github.run_number }}` to `report-url`. GitHub Pages serves
+> files with a 10-minute browser cache (`Cache-Control: max-age=600`). Without a changing query
+> parameter the badge URL is identical on every push, so browsers serve the stale cached report
+> until it expires. Adding the run number makes each deployment's URL unique — the browser fetches
+> fresh content while GitHub Pages ignores the query parameter and serves the current `index.html`.
 
 #### Per-language HTML report notes
 
