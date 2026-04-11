@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1 (2026-04-11)
+
+### Bug Fixes
+
+- **ci:** add cache-busting query param to report-url (30c95fe)
+
 ## 0.3.0 (2026-04-11)
 
 ### Features
