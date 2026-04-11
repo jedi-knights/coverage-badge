@@ -475,8 +475,89 @@ _BADGE_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Matches a full linked badge: [![alt](badge_url)](link_url)
+# Only `alt` and `label` are named groups — they are used in substitutions.
+# The badge URL suffix and outer link URL are anonymous patterns that bound
+# the match without being referenced by name.
+_LINKED_BADGE_RE = re.compile(
+    r"\[!\[(?P<alt>[^\]]*)\]"
+    r"\(https://img\.shields\.io/badge/(?P<label>(?:[^-]|--)*)(?:-[^)\s\"'?]+)\)"
+    r"\]\([^)]+\)",
+    re.IGNORECASE,
+)
 
-def update_badge(readme_path: str, pct: float | None, label: str) -> bool:
+# Matches a bare badge: ![alt](badge_url) NOT preceded by [ (i.e., not the
+# inner image of an already-linked badge).  Used when report_url is provided
+# to wrap the badge in a link.
+_BARE_BADGE_RE = re.compile(
+    r"(?<!\[)!\[(?P<alt>[^\]]*)\]"
+    r"\(https://img\.shields\.io/badge/(?P<label>(?:[^-]|--)*)(?:-[^)\s\"'?]+)\)",
+    re.IGNORECASE,
+)
+
+
+def _apply_linked_substitutions(
+    content: str, new_url: str, label: str, report_url: str
+) -> tuple[str, int]:
+    """Apply badge URL and outer link URL updates when report_url is provided.
+
+    Processes linked badges ``[![alt](badge_url)](link_url)`` first, then bare
+    badges ``![alt](badge_url)``, wrapping them in the supplied ``report_url``.
+    A single replacer handles both passes because the two regexes expose the
+    same named groups (``alt`` and ``label``).
+
+    Args:
+        content: README text to transform.
+        new_url: Replacement shields.io badge URL.
+        label: Plain-text badge label to match (case-insensitive).
+        report_url: URL to use as the outer link for every matched badge.
+
+    Returns:
+        Tuple of (updated content, number of replacements made).
+    """
+    count = 0
+
+    def replace(m: re.Match) -> str:
+        nonlocal count
+        if _shields_decode(m.group("label")).lower() == label.lower():
+            count += 1
+            return f"[![{m.group('alt')}]({new_url})]({report_url})"
+        return m.group(0)
+
+    content = _LINKED_BADGE_RE.sub(replace, content)
+    content = _BARE_BADGE_RE.sub(replace, content)
+    return content, count
+
+
+def _apply_url_substitution(content: str, new_url: str, label: str) -> tuple[str, int]:
+    """Update only the badge URL, preserving any existing outer link structure.
+
+    Args:
+        content: README text to transform.
+        new_url: Replacement shields.io badge URL.
+        label: Plain-text badge label to match (case-insensitive).
+
+    Returns:
+        Tuple of (updated content, number of replacements made).
+    """
+    count = 0
+
+    def replacer(m: re.Match) -> str:
+        nonlocal count
+        if _shields_decode(m.group("label")).lower() == label.lower():
+            count += 1
+            return new_url
+        return m.group(0)
+
+    return _BADGE_URL_RE.sub(replacer, content), count
+
+
+def update_badge(
+    readme_path: str,
+    pct: float | None,
+    label: str,
+    report_url: str = "",
+) -> bool:
     """Replace the matching badge URL in readme_path.
 
     Locates all shields.io static badge URLs whose decoded label matches
@@ -484,10 +565,21 @@ def update_badge(readme_path: str, pct: float | None, label: str) -> bool:
     :func:`badge_url`. Uses an atomic write (temp file + rename) to avoid
     corrupting the README on partial write failures.
 
+    When ``report_url`` is supplied the badge is written as a linked badge
+    ``[![label](badge_url)](report_url)``:
+
+    - Bare badges ``![label](...)`` are wrapped in the link.
+    - Already-linked badges ``[![label](...))(old_link)`` have both the inner
+      badge URL and the outer link URL updated.
+
+    When ``report_url`` is absent the behavior is unchanged from the original:
+    only the badge URL is updated, and any existing outer link is preserved.
+
     Args:
         readme_path: Path to the README file to update.
         pct: Coverage percentage for the new badge, or ``None`` for unknown.
         label: Plain-text badge label to match (e.g. ``"coverage"``).
+        report_url: URL to link from the badge. Empty string disables linking.
 
     Returns:
         ``True`` when at least one badge was replaced, ``False`` when no
@@ -496,21 +588,24 @@ def update_badge(readme_path: str, pct: float | None, label: str) -> bool:
     Raises:
         OSError: If the README cannot be read, or if the atomic write fails.
     """
+    if report_url and not report_url.startswith(("https://", "http://")):
+        raise ValueError(
+            f"report_url must start with 'https://' or 'http://': {report_url!r}"
+        )
+
     with open(readme_path, encoding="utf-8") as f:
         content = f.read()
 
     new_url = badge_url(pct, label)
-    replacements_made = 0
 
-    def replacer(m: re.Match) -> str:
-        nonlocal replacements_made
-        if _shields_decode(m.group("label")).lower() == label.lower():
-            replacements_made += 1
-            return new_url
-        return m.group(0)
+    if report_url:
+        updated, count = _apply_linked_substitutions(
+            content, new_url, label, report_url
+        )
+    else:
+        updated, count = _apply_url_substitution(content, new_url, label)
 
-    updated = _BADGE_URL_RE.sub(replacer, content)
-    if replacements_made == 0:
+    if count == 0:
         return False
 
     # Atomic write: close the fd immediately and open by name to avoid leaking
@@ -628,10 +723,15 @@ def _resolve_coverage(coverage_file: str) -> float | None:
     return None
 
 
-def _update_readme_badge(readme_path: str, pct: float | None, badge_label: str) -> int:
+def _update_readme_badge(
+    readme_path: str,
+    pct: float | None,
+    badge_label: str,
+    report_url: str = "",
+) -> int:
     """Write the coverage badge to the README. Returns 0 on success, 1 on OSError."""
     try:
-        found = update_badge(readme_path, pct, badge_label)
+        found = update_badge(readme_path, pct, badge_label, report_url=report_url)
     except OSError as exc:
         logger.error("%s", exc)
         return 1
@@ -644,6 +744,26 @@ def _update_readme_badge(readme_path: str, pct: float | None, badge_label: str) 
     return 0
 
 
+def _warn_if_pages_unavailable(report_url: str) -> None:
+    """Emit a warning when report_url is set on a repo that may not support Pages.
+
+    GitHub Pages for private and internal repositories requires GitHub Enterprise
+    Cloud. When a non-public visibility is detected the caller's deploy step may
+    fail with HTTP 422, so a warning is emitted early.
+
+    Args:
+        report_url: The report URL passed by the user. No-op when empty.
+    """
+    if not report_url:
+        return
+    visibility = os.environ.get("REPO_VISIBILITY", "").strip().lower()
+    if visibility in ("private", "internal"):
+        logger.warning(
+            "GitHub Pages for private repositories requires GitHub Enterprise Cloud. "
+            "The deploy step may fail with HTTP 422 if your plan does not support it."
+        )
+
+
 def main() -> int:
     """Detect coverage, update the README badge, and enforce the threshold.
 
@@ -653,6 +773,9 @@ def main() -> int:
     - ``README_PATH``: path to the README to update (default: ``README.md``).
     - ``BADGE_LABEL``: alt-text label of the badge to replace (default: ``coverage``).
     - ``FAIL_BELOW``: minimum coverage percentage; ``0`` disables the check.
+    - ``REPORT_URL``: URL to link from the badge; empty disables linking.
+    - ``REPO_VISIBILITY``: ``public``, ``private``, or ``internal``; used to
+      warn when Pages may not be available.
 
     Returns:
         ``0`` on success, ``1`` on any validation or I/O failure, or when
@@ -662,15 +785,20 @@ def main() -> int:
     coverage_file = os.environ.get("COVERAGE_FILE", "").strip()
     readme_path = os.environ.get("README_PATH", "README.md").strip()
     badge_label = os.environ.get("BADGE_LABEL", "coverage").strip()
+    report_url = os.environ.get("REPORT_URL", "").strip()
     fail_below = _parse_inputs(badge_label)
     if fail_below is None:
         return 1
+
+    _warn_if_pages_unavailable(report_url)
 
     try:
         pct = _resolve_coverage(coverage_file)
     except FileNotFoundError:
         logger.warning("No coverage data found — badge updated to show 'unknown'")
-        return _update_readme_badge(readme_path, None, badge_label)
+        return _update_readme_badge(
+            readme_path, None, badge_label, report_url=report_url
+        )
 
     if pct is None:
         return 1
@@ -678,7 +806,7 @@ def main() -> int:
     logger.info("Coverage: %s%%", f"{pct:.1f}")
     set_output("coverage-percentage", f"{pct:.1f}")
 
-    if _update_readme_badge(readme_path, pct, badge_label):
+    if _update_readme_badge(readme_path, pct, badge_label, report_url=report_url):
         return 1
 
     if fail_below > 0 and pct < fail_below:

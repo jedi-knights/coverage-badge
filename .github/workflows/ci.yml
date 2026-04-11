@@ -65,21 +65,33 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v6
         with:
           token: ${{ secrets.GH_TOKEN }}
       - uses: astral-sh/setup-uv@v8.0.0
       - run: uv sync --frozen
-      - run: uv run invoke test
+      - run: uv run pytest --cov-report=html
       - name: Update coverage badge
         env:
           README_PATH: README.md
           BADGE_LABEL: coverage
           FAIL_BELOW: "0"
+          REPORT_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+          REPO_VISIBILITY: ${{ github.repository_visibility }}
         run: python3 scripts/update_badge.py
       - name: Commit badge
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git diff --quiet README.md || (git add README.md && git commit -m "chore: update coverage badge [skip ci]" && git push)
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: htmlcov/
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -30,6 +30,15 @@ inputs:
     description: Exit non-zero if coverage is below this percentage. "0" disables the check.
     required: false
     default: "0"
+  report-url:
+    description: >
+      URL of the HTML coverage report to link from the badge.
+      Typically a GitHub Pages URL (e.g. https://owner.github.io/repo/).
+      When set, the badge in the README becomes a clickable link:
+      [![coverage](badge_url)](report-url).
+      When omitted, the action behaves as before — a bare badge image.
+    required: false
+    default: ""
 
 outputs:
   coverage-percentage:
@@ -47,4 +56,6 @@ runs:
         README_PATH: ${{ inputs.readme-path }}
         BADGE_LABEL: ${{ inputs.badge-label }}
         FAIL_BELOW: ${{ inputs.fail-below }}
+        REPORT_URL: ${{ inputs.report-url }}
+        REPO_VISIBILITY: ${{ github.repository_visibility }}
       run: python3 "${{ github.action_path }}/scripts/update_badge.py"
