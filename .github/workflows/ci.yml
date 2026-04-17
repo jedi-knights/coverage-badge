@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v8.0.0
+      - uses: astral-sh/setup-uv@v8
       - run: uv sync --frozen
       - run: uv run invoke lint
 
@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v8.0.0
+      - uses: astral-sh/setup-uv@v8
       - run: uv sync --frozen
       - run: uv run invoke test
 
@@ -74,9 +74,9 @@ jobs:
       - uses: actions/checkout@v6
         with:
           token: ${{ secrets.GH_TOKEN }}
-      - uses: astral-sh/setup-uv@v8.0.0
+      - uses: astral-sh/setup-uv@v8
       - run: uv sync --frozen
-      - run: uv run pytest --cov-report=html
+      - run: uv run pytest --cov-report=html --cov-report=xml
       - name: Update coverage badge
         env:
           README_PATH: README.md
@@ -90,8 +90,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git diff --quiet README.md || (git add README.md && git commit -m "chore: update coverage badge [skip ci]" && git push)
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: htmlcov/
       - id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
