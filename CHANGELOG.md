@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2 (2026-08-22)
+
+### Bug Fixes
+
+- **ci:** align action versions and fix badge coverage format (#20) (508a562)
+
 ## 0.3.1 (2026-04-11)
 
 ### Bug Fixes
